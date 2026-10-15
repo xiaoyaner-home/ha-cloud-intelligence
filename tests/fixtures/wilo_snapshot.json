@@ -1,0 +1,57 @@
+{
+  "code": "200",
+  "data": {
+    "switch": {
+      "time": 1000000,
+      "value": 1
+    },
+    "temperature": {
+      "time": 1000001,
+      "value": 31
+    },
+    "presSet": {
+      "time": 1000002,
+      "value": 3.2
+    },
+    "refresh": {
+      "time": 1000003,
+      "value": 1
+    },
+    "mode": {
+      "time": 1000004,
+      "value": 1
+    },
+    "error": {
+      "time": 1000005,
+      "value": 0
+    },
+    "errorState": {
+      "time": 1000006,
+      "value": 0
+    },
+    "run": {
+      "time": 1000007,
+      "value": 0
+    },
+    "propor": {
+      "time": 1000008,
+      "value": 35
+    },
+    "version": {
+      "time": 1000009,
+      "value": "DEMO-1.2"
+    },
+    "pressure": {
+      "time": 1000010,
+      "value": 2.7
+    },
+    "tarSpeed": {
+      "time": 1000011,
+      "value": 2400
+    },
+    "nowSpeed": {
+      "time": 1000012,
+      "value": 0
+    }
+  }
+}

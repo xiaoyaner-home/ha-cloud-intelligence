@@ -1,0 +1,51 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-core:
+    name: Core checks (Python 3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.12"
+      - name: Install pinned core tools
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Run core checks
+        run: make PYTHON=python check-core
+
+  check-ha-and-package:
+    name: HA container and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Pull the fixed HA image first
+        run: docker pull --platform linux/amd64 ghcr.io/home-assistant/home-assistant:2026.9.1
+      - name: Run HA checks and build package
+        run: make PYTHON=python3 check-ha package
+
+  validate-hacs:
+    name: HACS repository validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Validate integration metadata and brand
+        uses: hacs/action@6e9f135ae51ca546d08093cf740217f442bb4561 # pinned official commit
+        with:
+          category: integration
+          comment: false

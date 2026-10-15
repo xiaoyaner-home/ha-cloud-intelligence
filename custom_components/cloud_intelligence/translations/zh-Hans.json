@@ -1,0 +1,107 @@
+{
+  "title": "Cloud Intelligence (Local)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "导入本地设备授权",
+        "description": "仅导入您自己的 Wilo HiMulti-1 WiFi 授权。每轮请求一次遥测回报（refresh=1），不更改运行设置。授权保存在 HA 标准配置条目中，本集成不加密；请保护 HA 配置和备份。",
+        "data": {
+          "name": "名称",
+          "host": "设备局域网 IPv4 地址",
+          "productKey": "产品键 productKey",
+          "deviceName": "设备名称 deviceName（固定身份）",
+          "accessKey": "本地 accessKey",
+          "accessToken": "本地 accessToken"
+        }
+      },
+      "reauth_confirm": {
+        "title": "导入本地设备授权",
+        "description": "仅导入您自己的 Wilo HiMulti-1 WiFi 授权。每轮请求一次遥测回报（refresh=1），不更改运行设置。授权保存在 HA 标准配置条目中，本集成不加密；请保护 HA 配置和备份。",
+        "data": {
+          "name": "名称",
+          "host": "设备局域网 IPv4 地址",
+          "productKey": "产品键 productKey",
+          "deviceName": "设备名称 deviceName（固定身份）",
+          "accessKey": "本地 accessKey",
+          "accessToken": "本地 accessToken"
+        }
+      },
+      "reconfigure": {
+        "title": "导入本地设备授权",
+        "description": "仅导入您自己的 Wilo HiMulti-1 WiFi 授权。每轮请求一次遥测回报（refresh=1），不更改运行设置。授权保存在 HA 标准配置条目中，本集成不加密；请保护 HA 配置和备份。",
+        "data": {
+          "name": "名称",
+          "host": "设备局域网 IPv4 地址",
+          "productKey": "产品键 productKey",
+          "deviceName": "设备名称 deviceName（固定身份）",
+          "accessKey": "本地 accessKey",
+          "accessToken": "本地 accessToken"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "授权被拒绝，请重新取得并导入授权。",
+      "cannot_connect": "未收到完整有效的本地状态，请检查地址、网络和授权。",
+      "wrong_device": "局域网设备身份不匹配。",
+      "invalid_input": "请填写受支持产品键、原始授权字段和局域网私有 IPv4 地址。"
+    },
+    "abort": {
+      "already_configured": "此设备已配置。",
+      "wrong_device": "重新导入必须使用相同 productKey 和 deviceName。",
+      "reauth_successful": "授权已更新。",
+      "reconfigure_successful": "设备配置已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "本地轮询",
+        "data": {
+          "scan_interval": "轮询间隔（秒，60–3600）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "水温"
+      },
+      "presset": {
+        "name": "目标压力"
+      },
+      "mode": {
+        "name": "运行模式"
+      },
+      "error": {
+        "name": "故障代码"
+      },
+      "propor": {
+        "name": "启动压力比例"
+      },
+      "version": {
+        "name": "软件版本"
+      },
+      "pressure": {
+        "name": "水压"
+      },
+      "tarspeed": {
+        "name": "目标转速"
+      },
+      "nowspeed": {
+        "name": "实际转速"
+      }
+    },
+    "binary_sensor": {
+      "switch": {
+        "name": "开机许可"
+      },
+      "run": {
+        "name": "电机运行"
+      },
+      "errorstate": {
+        "name": "故障"
+      }
+    }
+  }
+}

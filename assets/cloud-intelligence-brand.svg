@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Original Cloud Intelligence (Local) brand artwork.
+  SPDX-License-Identifier: Apache-2.0
+  No third-party or vendor artwork is used.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Cloud Intelligence</title>
+  <desc id="desc">A geometric blue cloud joined to cyan network points.</desc>
+  <defs>
+    <linearGradient id="cloud" x1="42" y1="52" x2="212" y2="211" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1478D4"/>
+      <stop offset="1" stop-color="#1647A7"/>
+    </linearGradient>
+    <linearGradient id="halo" x1="50" y1="45" x2="205" y2="215" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2DE0D0"/>
+      <stop offset="1" stop-color="#28A7E8"/>
+    </linearGradient>
+  </defs>
+  <path d="M53 188 82 72 185 45 224 145 174 215Z" fill="#081F46" opacity=".08"/>
+  <path d="M59 177 84 69 185 48 216 145 169 207Z" fill="none" stroke="url(#halo)" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M69 164c0-18 14-32 32-32 3 0 7 1 10 2 6-22 26-38 50-38 29 0 52 22 54 50 13 4 22 16 22 30 0 18-14 32-32 32H101c-18 0-32-14-32-32Z" fill="url(#cloud)"/>
+  <path d="M69 164c0-18 14-32 32-32 3 0 7 1 10 2 6-22 26-38 50-38 29 0 52 22 54 50 13 4 22 16 22 30 0 18-14 32-32 32H101c-18 0-32-14-32-32Z" fill="none" stroke="#0B3D91" stroke-width="4" stroke-linejoin="round"/>
+  <g fill="none" stroke="#43E0D1" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M78 105 52 78"/>
+    <path d="M185 78 208 57"/>
+    <path d="M190 183 218 198"/>
+  </g>
+  <g fill="#43E0D1" stroke="#0B3D91" stroke-width="4">
+    <circle cx="48" cy="74" r="10"/>
+    <circle cx="212" cy="53" r="10"/>
+    <circle cx="223" cy="201" r="10"/>
+  </g>
+  <g fill="#D8FFFA">
+    <circle cx="48" cy="74" r="3"/>
+    <circle cx="212" cy="53" r="3"/>
+    <circle cx="223" cy="201" r="3"/>
+  </g>
+  <circle cx="147" cy="151" r="13" fill="#43E0D1" stroke="#0B3D91" stroke-width="5"/>
+  <circle cx="147" cy="151" r="4" fill="#083477"/>
+</svg>

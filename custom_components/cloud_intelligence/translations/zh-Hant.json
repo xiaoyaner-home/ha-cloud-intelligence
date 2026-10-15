@@ -1,0 +1,107 @@
+{
+  "title": "Cloud Intelligence (Local)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "匯入本機裝置授權",
+        "description": "僅匯入您自己的 Wilo HiMulti-1 WiFi 授權。每輪請求一次遙測回報（refresh=1），不變更運行設定。授權保存在 HA 標準設定項目，本整合不加密；請保護 HA 設定及備份。",
+        "data": {
+          "name": "名稱",
+          "host": "裝置區域網路 IPv4 位址",
+          "productKey": "產品鍵 productKey",
+          "deviceName": "裝置名稱 deviceName（固定身分）",
+          "accessKey": "本機 accessKey",
+          "accessToken": "本機 accessToken"
+        }
+      },
+      "reauth_confirm": {
+        "title": "匯入本機裝置授權",
+        "description": "僅匯入您自己的 Wilo HiMulti-1 WiFi 授權。每輪請求一次遙測回報（refresh=1），不變更運行設定。授權保存在 HA 標準設定項目，本整合不加密；請保護 HA 設定及備份。",
+        "data": {
+          "name": "名稱",
+          "host": "裝置區域網路 IPv4 位址",
+          "productKey": "產品鍵 productKey",
+          "deviceName": "裝置名稱 deviceName（固定身分）",
+          "accessKey": "本機 accessKey",
+          "accessToken": "本機 accessToken"
+        }
+      },
+      "reconfigure": {
+        "title": "匯入本機裝置授權",
+        "description": "僅匯入您自己的 Wilo HiMulti-1 WiFi 授權。每輪請求一次遙測回報（refresh=1），不變更運行設定。授權保存在 HA 標準設定項目，本整合不加密；請保護 HA 設定及備份。",
+        "data": {
+          "name": "名稱",
+          "host": "裝置區域網路 IPv4 位址",
+          "productKey": "產品鍵 productKey",
+          "deviceName": "裝置名稱 deviceName（固定身分）",
+          "accessKey": "本機 accessKey",
+          "accessToken": "本機 accessToken"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "授權被拒絕，請重新取得並匯入授權。",
+      "cannot_connect": "未收到完整有效的本機狀態，請檢查位址、網路與授權。",
+      "wrong_device": "區域網路裝置身分不符。",
+      "invalid_input": "請填寫支援的產品鍵、原始授權欄位及私有 IPv4 位址。"
+    },
+    "abort": {
+      "already_configured": "此裝置已設定。",
+      "wrong_device": "重新匯入必須使用相同 productKey 與 deviceName。",
+      "reauth_successful": "授權已更新。",
+      "reconfigure_successful": "裝置設定已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "本機輪詢",
+        "data": {
+          "scan_interval": "輪詢間隔（秒，60–3600）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "水溫"
+      },
+      "presset": {
+        "name": "目標壓力"
+      },
+      "mode": {
+        "name": "運行模式"
+      },
+      "error": {
+        "name": "故障代碼"
+      },
+      "propor": {
+        "name": "啟動壓力比例"
+      },
+      "version": {
+        "name": "軟體版本"
+      },
+      "pressure": {
+        "name": "水壓"
+      },
+      "tarspeed": {
+        "name": "目標轉速"
+      },
+      "nowspeed": {
+        "name": "實際轉速"
+      }
+    },
+    "binary_sensor": {
+      "switch": {
+        "name": "開機許可"
+      },
+      "run": {
+        "name": "馬達運行"
+      },
+      "errorstate": {
+        "name": "故障"
+      }
+    }
+  }
+}

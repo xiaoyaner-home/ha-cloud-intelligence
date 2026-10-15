@@ -1,0 +1,107 @@
+{
+  "title": "Cloud Intelligence (Local)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Import local device authorization",
+        "description": "Import authorization for your own Wilo HiMulti-1 WiFi. This requests one telemetry report (refresh=1), not operating settings. Protect HA configuration and backups: credentials are stored in standard config entries, not encrypted by this integration.",
+        "data": {
+          "name": "Name",
+          "host": "Device LAN IPv4 address",
+          "productKey": "Product key",
+          "deviceName": "Device name (immutable identity)",
+          "accessKey": "Local access key",
+          "accessToken": "Local access token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Import local device authorization",
+        "description": "Import authorization for your own Wilo HiMulti-1 WiFi. This requests one telemetry report (refresh=1), not operating settings. Protect HA configuration and backups: credentials are stored in standard config entries, not encrypted by this integration.",
+        "data": {
+          "name": "Name",
+          "host": "Device LAN IPv4 address",
+          "productKey": "Product key",
+          "deviceName": "Device name (immutable identity)",
+          "accessKey": "Local access key",
+          "accessToken": "Local access token"
+        }
+      },
+      "reconfigure": {
+        "title": "Import local device authorization",
+        "description": "Import authorization for your own Wilo HiMulti-1 WiFi. This requests one telemetry report (refresh=1), not operating settings. Protect HA configuration and backups: credentials are stored in standard config entries, not encrypted by this integration.",
+        "data": {
+          "name": "Name",
+          "host": "Device LAN IPv4 address",
+          "productKey": "Product key",
+          "deviceName": "Device name (immutable identity)",
+          "accessKey": "Local access key",
+          "accessToken": "Local access token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Authorization rejected. Obtain and re-import replacement authorization.",
+      "cannot_connect": "No complete valid local report. Check the address, network and authorization.",
+      "wrong_device": "The LAN device identity does not match.",
+      "invalid_input": "Use the supported product key, exact authorization fields and a private LAN IPv4 address."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "wrong_device": "Re-import must refer to the same product key and device name.",
+      "reauth_successful": "Authorization updated.",
+      "reconfigure_successful": "Device configuration updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Local polling",
+        "data": {
+          "scan_interval": "Poll interval (seconds, 60–3600)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Water temperature"
+      },
+      "presset": {
+        "name": "Target pressure"
+      },
+      "mode": {
+        "name": "Operating mode"
+      },
+      "error": {
+        "name": "Fault code"
+      },
+      "propor": {
+        "name": "Starting pressure ratio"
+      },
+      "version": {
+        "name": "Software version"
+      },
+      "pressure": {
+        "name": "Water pressure"
+      },
+      "tarspeed": {
+        "name": "Target speed"
+      },
+      "nowspeed": {
+        "name": "Actual speed"
+      }
+    },
+    "binary_sensor": {
+      "switch": {
+        "name": "Power permission"
+      },
+      "run": {
+        "name": "Motor running"
+      },
+      "errorstate": {
+        "name": "Fault"
+      }
+    }
+  }
+}

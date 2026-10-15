@@ -1,0 +1,107 @@
+{
+  "title": "Cloud Intelligence (Local)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "ローカル機器の認証情報をインポート",
+        "description": "ご自身の Wilo HiMulti-1 WiFi の認証情報のみを入力してください。各更新は状態レポート（refresh=1）を一度要求しますが、運転設定は変更しません。認証情報は HA の標準設定エントリーに保存され、本統合では暗号化しません。設定とバックアップを保護してください。",
+        "data": {
+          "name": "名前",
+          "host": "機器の LAN IPv4 アドレス",
+          "productKey": "製品キー productKey",
+          "deviceName": "機器名 deviceName（固定識別子）",
+          "accessKey": "ローカル accessKey",
+          "accessToken": "ローカル accessToken"
+        }
+      },
+      "reauth_confirm": {
+        "title": "ローカル機器の認証情報をインポート",
+        "description": "ご自身の Wilo HiMulti-1 WiFi の認証情報のみを入力してください。各更新は状態レポート（refresh=1）を一度要求しますが、運転設定は変更しません。認証情報は HA の標準設定エントリーに保存され、本統合では暗号化しません。設定とバックアップを保護してください。",
+        "data": {
+          "name": "名前",
+          "host": "機器の LAN IPv4 アドレス",
+          "productKey": "製品キー productKey",
+          "deviceName": "機器名 deviceName（固定識別子）",
+          "accessKey": "ローカル accessKey",
+          "accessToken": "ローカル accessToken"
+        }
+      },
+      "reconfigure": {
+        "title": "ローカル機器の認証情報をインポート",
+        "description": "ご自身の Wilo HiMulti-1 WiFi の認証情報のみを入力してください。各更新は状態レポート（refresh=1）を一度要求しますが、運転設定は変更しません。認証情報は HA の標準設定エントリーに保存され、本統合では暗号化しません。設定とバックアップを保護してください。",
+        "data": {
+          "name": "名前",
+          "host": "機器の LAN IPv4 アドレス",
+          "productKey": "製品キー productKey",
+          "deviceName": "機器名 deviceName（固定識別子）",
+          "accessKey": "ローカル accessKey",
+          "accessToken": "ローカル accessToken"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "認証が拒否されました。認証情報を再取得してインポートしてください。",
+      "cannot_connect": "完全で有効なローカル状態を受信できません。アドレス、ネットワーク、認証情報を確認してください。",
+      "wrong_device": "LAN 機器の識別子が一致しません。",
+      "invalid_input": "対応する製品キー、正確な認証情報、プライベート IPv4 アドレスを入力してください。"
+    },
+    "abort": {
+      "already_configured": "この機器は設定済みです。",
+      "wrong_device": "再インポートでは同じ productKey と deviceName が必要です。",
+      "reauth_successful": "認証情報を更新しました。",
+      "reconfigure_successful": "機器の設定を更新しました。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ローカル更新",
+        "data": {
+          "scan_interval": "更新間隔（秒、60–3600）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "水温"
+      },
+      "presset": {
+        "name": "目標圧力"
+      },
+      "mode": {
+        "name": "運転モード"
+      },
+      "error": {
+        "name": "故障コード"
+      },
+      "propor": {
+        "name": "始動圧力比"
+      },
+      "version": {
+        "name": "ソフトウェアバージョン"
+      },
+      "pressure": {
+        "name": "水圧"
+      },
+      "tarspeed": {
+        "name": "目標回転数"
+      },
+      "nowspeed": {
+        "name": "実際の回転数"
+      }
+    },
+    "binary_sensor": {
+      "switch": {
+        "name": "電源許可"
+      },
+      "run": {
+        "name": "モーター運転中"
+      },
+      "errorstate": {
+        "name": "故障"
+      }
+    }
+  }
+}
