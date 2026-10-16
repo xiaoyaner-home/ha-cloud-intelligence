@@ -101,11 +101,11 @@ Do not copy the repository-root `cloud_intelligence` package.
 ### HACS
 
 In HACS, open **Custom repositories**, add
-`https://github.com/xiaoyaner-home/ha-cloud-intelligence` with category
+`https://github.com/xiaoyaner0201/ha-cloud-intelligence` with category
 **Integration**, download it, and restart HA. Then add **Cloud Intelligence (Local)**
 under Settings → Devices & services. This is a custom-repository beta, not a listing
 in the HACS default catalog. HACS installs from the repository; the ZIP attached to
-[GitHub Releases](https://github.com/xiaoyaner-home/ha-cloud-intelligence/releases)
+[GitHub Releases](https://github.com/xiaoyaner0201/ha-cloud-intelligence/releases)
 is for manual installation.
 
 ## Recovery and state meaning

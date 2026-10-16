@@ -43,11 +43,11 @@ ACK や更新要求のエコーだけでは成功になりません。各回に�
 ### HACS でのインストール
 
 HACS の **カスタムリポジトリ** で
-`https://github.com/xiaoyaner-home/ha-cloud-intelligence` を **Integration** として追加し、
+`https://github.com/xiaoyaner0201/ha-cloud-intelligence` を **Integration** として追加し、
 ダウンロード後に HA を再起動してください。その後 **Cloud Intelligence (Local)** を追加します。
 カスタムリポジトリとして提供するベータ版であり、HACS 標準カタログには掲載されていません。
 
-手動インストール用 ZIP は [GitHub Releases](https://github.com/xiaoyaner-home/ha-cloud-intelligence/releases)
+手動インストール用 ZIP は [GitHub Releases](https://github.com/xiaoyaner0201/ha-cloud-intelligence/releases)
 から取得できます。内容は `custom_components/cloud_intelligence/...` なので、HA 設定ディレクトリに
 展開して `custom_components/cloud_intelligence/manifest.json` が存在する状態にしてください。
 HACS はリポジトリのソースを使用し、この手動 ZIP は使用しません。
