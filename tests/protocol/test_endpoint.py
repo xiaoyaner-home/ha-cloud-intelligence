@@ -18,6 +18,7 @@ from custom_components.cloud_intelligence.client import (
 )
 from tests.protocol.fixtures import report, unwire
 from tests.protocol.test_client import DATA, VALUES, LanSocket
+from tests.protocol.test_power import PowerSocket
 
 UDP = telemetry.Socket
 
@@ -57,6 +58,10 @@ class BoundLanSocket(LanSocket):
         super().close()
 
 
+class BoundPowerSocket(BoundLanSocket, PowerSocket):
+    """Real loopback endpoint with synthetic enable-only server behavior."""
+
+
 class EndpointTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -81,6 +86,33 @@ class EndpointTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(discovery.closed)
                 self.assertTrue(state.closed)
         return result, state
+
+    async def test_power_rebinds_actual_endpoint_and_read_reuses_it(self):
+        client = LocalClient(dict(DATA), enable_power_control=True)
+        sockets = [
+            BoundPowerSocket(self.sink),
+            BoundPowerSocket(self.sink, notifications=[(101, report(VALUES))]),
+            BoundPowerSocket(self.sink, notifications=[(301, report({**VALUES, "switch": 0}))]),
+        ]
+        for sock in sockets:
+            self.addCleanup(sock.close)
+        with patch.object(telemetry, "Socket", side_effect=sockets):
+            result = await client.set_power(False)
+        self.assertTrue(result.sent)
+        self.assertEqual(sockets[1].actual, sockets[2].actual)
+        self.assertTrue(all(sock.udp.socket.fileno() == -1 for sock in sockets))
+        _, state = await self.read_round(client)
+        self.assertEqual(state.actual, sockets[1].actual)
+        seen_power = []
+        while True:
+            try:
+                packet, peer = self.sink.recvfrom(16384)
+            except BlockingIOError:
+                break
+            req = unwire(packet)
+            if req["token"] == sockets[1].power_requests[0]["token"]:
+                seen_power.append(peer)
+        self.assertEqual(seen_power, [sockets[1].actual])
 
     async def test_repeated_reads_use_actual_same_source_endpoint(self):
         client = LocalClient(dict(DATA))

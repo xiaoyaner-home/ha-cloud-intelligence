@@ -57,12 +57,16 @@
       "init": {
         "title": "ローカル更新",
         "data": {
-          "scan_interval": "更新間隔（秒、60–3600）"
+          "scan_interval": "更新間隔（秒、60–3600）",
+          "enable_power_control": "実験的な電源許可制御を有効化（実機未検証）"
         }
       }
     }
   },
   "entity": {
+    "switch": {
+      "power_control": {"name": "電源許可（実験的）"}
+    },
     "sensor": {
       "temperature": {
         "name": "水温"

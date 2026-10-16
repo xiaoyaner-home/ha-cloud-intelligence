@@ -11,6 +11,13 @@ from types import MappingProxyType
 
 from . import alcs, telemetry
 from ._core import WILO_MODEL_KEY, Snapshot, parse_snapshot
+from .power import (
+    PowerCancelled,
+    PowerDisabled,
+    PowerOutcomeUnknown,
+    PowerResult,
+    _PowerAttempt,
+)
 
 
 class CannotConnect(Exception):
@@ -64,6 +71,7 @@ class LocalClient:
     # Do not allow dataclass representations to expose authorization.
     data: dict = field(repr=False)
     timeout: float = 10.0
+    enable_power_control: bool = False
     _endpoint: telemetry._Endpoint = field(
         default_factory=telemetry._Endpoint, init=False, repr=False
     )
@@ -139,6 +147,83 @@ class LocalClient:
         finally:
             self._reading = False
 
+    async def set_power(self, enabled: bool) -> PowerResult:
+        """Experimental enable permission, not motor running. Never retry a send.
+
+        A fresh full pre-read and the write share one authenticated Observe session.
+        Verification reauthenticates AFTER send on the same endpoint, under the same
+        exclusive 10-second operation budget. Old session notifications cannot prove
+        success. Local receive time is not a device timestamp or anti-replay proof.
+        """
+        if type(enabled) is not bool:
+            raise TypeError("Power requires a strict bool")
+        if self.enable_power_control is not True:
+            raise PowerDisabled("Experimental power control is disabled")
+        if self._reading:
+            raise CannotConnect("Operation already in progress")
+        self._reading = True
+        attempt = _PowerAttempt(enabled)
+        try:
+            self.data = validate_input(self.data)
+            if type(self.timeout) not in (float, int) or not 0 < self.timeout <= 10:
+                raise ValueError("Invalid timeout")
+            peer = (self.data["host"], 5683)
+            deadline = time.monotonic() + self.timeout
+            candidate = {"ip": peer[0], "port": peer[1], "profile": [self.data]}
+            async with asyncio.timeout(self.timeout):
+                await self._identity(peer, deadline)
+
+                async def report(power=None):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise CannotConnect
+                    result = await telemetry.run_once(
+                        "0.0.0.0",
+                        candidate,
+                        self.data,
+                        request_report=True,
+                        maxwait=remaining,
+                        allow_network=True,
+                        _endpoint=self._endpoint,
+                        _power=power,
+                    )
+                    if result["status"] not in ("complete",):
+                        if result["status"] == "auth_rejected":
+                            raise InvalidAuth
+                        raise CannotConnect
+                    return self._snapshot(result, require_complete=True)
+
+                before = await report(attempt)
+                if not attempt.started:
+                    if before.snapshot.powered != enabled or not attempt.before:
+                        raise CannotConnect
+                    return PowerResult(False, before, MappingProxyType(attempt.before))
+                after = await report()
+                if after.snapshot.powered != enabled or any(
+                    after.snapshot.sample(k).value != attempt.before[k]
+                    for k in telemetry.SETTINGS - {"switch"}
+                ):
+                    raise PowerOutcomeUnknown
+                return PowerResult(True, after, MappingProxyType(attempt.before))
+        except asyncio.CancelledError:
+            if attempt.started:
+                raise PowerCancelled from None
+            raise
+        except (CannotConnect, InvalidAuth, IdentityMismatch):
+            if attempt.started:
+                raise PowerOutcomeUnknown from None
+            raise
+        except (TimeoutError, OSError):
+            if attempt.started:
+                raise PowerOutcomeUnknown from None
+            raise CannotConnect from None
+        except Exception:
+            if attempt.started:
+                raise PowerOutcomeUnknown from None
+            raise
+        finally:
+            self._reading = False
+
     async def _read_once(self, *, require_complete) -> LocalSnapshot:
         self.data = validate_input(self.data)
         if type(self.timeout) not in (float, int) or not 0 < self.timeout <= 10:
@@ -169,6 +254,10 @@ class LocalClient:
             raise InvalidAuth
         if not result["auth_verified"] or not result["subscribed"] or not result["telemetry"]:
             raise CannotConnect
+        return self._snapshot(result, require_complete=require_complete)
+
+    @staticmethod
+    def _snapshot(result, *, require_complete):
         # Local reports contain NO device source timestamps. Keep them absent.
         snapshot = parse_snapshot(
             {"code": "200", "data": {k: {"value": v} for k, v in result["telemetry"].items()}},

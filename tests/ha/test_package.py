@@ -50,7 +50,8 @@ class PackageTests(unittest.TestCase):
             code = """
 import importlib, pathlib, sys
 sys.path.insert(0, sys.argv[1])
-for name in ("config_flow", "sensor", "binary_sensor", "diagnostics", "client", "telemetry"):
+for name in ("config_flow", "sensor", "binary_sensor", "switch", "power",
+             "diagnostics", "client", "telemetry"):
     module = importlib.import_module("custom_components.cloud_intelligence." + name)
     assert pathlib.Path(module.__file__).is_relative_to(pathlib.Path(sys.argv[1]))
 assert "cloud_intelligence" not in sys.modules
@@ -70,12 +71,19 @@ print("standalone component imports with real Home Assistant")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("standalone component imports", result.stdout)
 
-    def test_manifest_locale_and_no_control_platform_contract(self):
+    def test_manifest_locale_and_narrow_opt_in_platform_contract(self):
         root = Path(__file__).resolve().parents[2]
         manifest = validate_package()
         self.assertEqual(manifest["version"], "0.1.0b0")
         component = root / "custom_components/cloud_intelligence"
-        for forbidden in ("switch.py", "number.py", "button.py", "select.py", "services.yaml"):
+        # Explicitly authorized exception to the former no-switch package boundary.
+        self.assertTrue((component / "switch.py").is_file())
+        from custom_components.cloud_intelligence.client import LocalClient
+        from custom_components.cloud_intelligence.const import PLATFORMS
+
+        self.assertEqual(PLATFORMS, ["sensor", "binary_sensor", "switch"])
+        self.assertIs(LocalClient({}).enable_power_control, False)
+        for forbidden in ("number.py", "button.py", "select.py", "services.yaml"):
             self.assertFalse((component / forbidden).exists())
         strings = json.loads((component / "strings.json").read_text())
         names = [*strings["entity"]["sensor"], *strings["entity"]["binary_sensor"]]

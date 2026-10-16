@@ -22,9 +22,14 @@ Do not claim review/approval unless it occurred. Contributions use
 [Apache-2.0](LICENSE); do not copy incompatible licensed implementations.
 
 The runtime boundary permits one exact fixed `refresh=1` telemetry report request
-per session, not arbitrary settings. No operating control, extra model, login,
-cloud request or device write may be enabled through metadata. Unknown profiles
-are rejected before active report requests. TSL ranges are not safety advice.
+per session. The sole experimental operating exception is strict-bool
+`LocalClient.set_power`, enabled only by explicit `enable_power_control=true`.
+Default false preserves all 12 read entities; the added switch uses a control-role
+ID. Full valid pre-read, one fixed `switch=0/1` send, fresh post-send authenticated
+Observe window and unchanged other writable settings are mandatory. No automatic
+retry, optimistic state, pressure/mode/speed setting, arbitrary setter, extra
+model, login or cloud request. Unknown outcomes must stay structured, including
+cancellation. Unknown profiles fail before network/write. TSL is not safety advice.
 
 Use real HA classes for flow/storage/registry/lifecycle tests. Replace network
 transport only; never replace HA itself with fake dataclasses. Preserve encrypted

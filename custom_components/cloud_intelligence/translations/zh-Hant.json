@@ -57,12 +57,16 @@
       "init": {
         "title": "本機輪詢",
         "data": {
-          "scan_interval": "輪詢間隔（秒，60–3600）"
+          "scan_interval": "輪詢間隔（秒，60–3600）",
+          "enable_power_control": "啟用實驗性開機許可控制（尚未經實機驗證）"
         }
       }
     }
   },
   "entity": {
+    "switch": {
+      "power_control": {"name": "開機許可（實驗性）"}
+    },
     "sensor": {
       "temperature": {
         "name": "水溫"

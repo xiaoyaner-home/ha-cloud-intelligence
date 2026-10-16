@@ -62,6 +62,20 @@ HA_MUTATIONS = (
         "and not False",
         "tests.protocol.test_contracts.Contracts.test_encrypted_ctype0_all_reply_shapes",
     ),
+    (
+        "power_payload_cannot_invert_permission",
+        "custom_components/cloud_intelligence/telemetry.py",
+        'params = {"switch": int(_power.enabled)}',
+        'params = {"switch": int(not _power.enabled)}',
+        "tests.protocol.test_power.PowerTests.test_both_directions_fixed_single_send_and_stable_endpoint",
+    ),
+    (
+        "power_must_preserve_other_settings",
+        "custom_components/cloud_intelligence/client.py",
+        'for k in telemetry.SETTINGS - {"switch"}',
+        "for k in frozenset()",
+        "tests.protocol.test_power.PowerTests.test_ack200_unchanged_partial_or_other_setting_change_is_unknown",
+    ),
 )
 
 

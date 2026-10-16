@@ -57,12 +57,16 @@
       "init": {
         "title": "本地轮询",
         "data": {
-          "scan_interval": "轮询间隔（秒，60–3600）"
+          "scan_interval": "轮询间隔（秒，60–3600）",
+          "enable_power_control": "启用实验性开机许可控制（尚未经实机验证）"
         }
       }
     }
   },
   "entity": {
+    "switch": {
+      "power_control": {"name": "开机许可（实验性）"}
+    },
     "sensor": {
       "temperature": {
         "name": "水温"

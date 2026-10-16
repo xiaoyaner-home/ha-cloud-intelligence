@@ -1,4 +1,4 @@
-"""Fixed Wilo report-request transport, not a general device setter.
+"""Bounded Wilo reports and private enable-only extension, not a generic setter.
 
 Opt 1 has no packet MAC or replay protection. Use only on a trusted LAN.
 Duplicate filtering is session-local, bounded, and is not anti-replay protection.
@@ -19,6 +19,10 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 
 from . import alcs as p
+from ._core import WILO_MODEL_KEY, parse_snapshot
+from .power import _PowerAttempt
+
+SETTINGS = frozenset(("switch", "presSet", "mode", "propor", "tarSpeed"))
 
 
 class Socket:
@@ -260,8 +264,16 @@ async def run_once(
     *,
     allow_network=False,
     _endpoint=None,
+    _power=None,
 ):
-    """Authenticate, subscribe and collect a bounded local report; always close."""
+    """Bounded report; private power extension writes only after a valid full pre-read."""
+    if _power is not None and (
+        type(_power) is not _PowerAttempt
+        or type(_power.enabled) is not bool
+        or _power.started
+        or not request_report
+    ):
+        raise ValueError("Invalid power attempt")
     peer = _inputs(boundip, candidate, credentials, request_report, maxwait, allow_network)
     result = {
         "status": "auth_timeout",
@@ -298,7 +310,7 @@ async def run_once(
     requests = {}
 
     def send(stage):
-        index = {"auth": 0, "subscribe": 1, "refresh": 2}[stage]
+        index = {"auth": 0, "subscribe": 1, "refresh": 2, "power": 3}[stage]
         mid = (base + index) % 65536
         token = token_prefix + bytes([index])
         if stage == "auth":
@@ -314,14 +326,16 @@ async def run_once(
             options = [(12, b"\x32")]
         else:
             path = (POST if stage == "subscribe" else SET).format(**fmt)
-            # The only property/set body in this module is fixed here. No caller
-            # input can supply property keys, values, method, path or retries.
+            # Fixed allowlist: no caller-controlled property/value/path/dict.
+            params = {} if stage == "subscribe" else {"refresh": 1}
+            if stage == "power":
+                params = {"switch": int(_power.enabled)}
             body = p.build_request(
                 mid,
                 "thing.event.property.post"
                 if stage == "subscribe"
                 else "thing.service.property.set",
-                {} if stage == "subscribe" else {"refresh": 1},
+                params,
             )
             body = p.alcs_encrypt(body, key)
             options = [(12, b"\x2a"), (71, sid.to_bytes(4, "big"))]
@@ -332,6 +346,8 @@ async def run_once(
         if stage == "refresh":
             result["refresh"]["send_attempts"] = 1  # BEFORE send; a failed send may be uncertain
             result["refresh"]["status"] = "send_uncertain"
+        if stage == "power":
+            _power.started = True  # Even sendto failure/cancellation is outcome unknown.
         written = sock.sendto(packet, peer)
         if written != len(packet):
             raise OSError("incomplete UDP send")
@@ -480,6 +496,27 @@ async def run_once(
                         result["observe_zero_count"] += 1
                     if set(result["telemetry"]) == STATES:
                         result["status"] = "complete"
+                        if _power is not None:
+                            snapshot = parse_snapshot(
+                                {
+                                    "code": "200",
+                                    "data": {
+                                        k: {"value": v} for k, v in result["telemetry"].items()
+                                    },
+                                },
+                                model_key=WILO_MODEL_KEY,
+                            )
+                            if any(snapshot.sample(k).value is None for k in STATES):
+                                result["status"] = "invalid_pre_read"
+                                break
+                            _power.before = {k: snapshot.sample(k).value for k in SETTINGS}
+                            if snapshot.powered != _power.enabled:
+                                if time.monotonic() >= overall:
+                                    break
+                                send("power")
+                            # NEVER use notifications/ACKs from this pre-write session
+                            # as post-write proof. Client establishes a new token/key
+                            # window after this socket closes, within its exclusive gate.
                         break
             except (ValueError, UnicodeError, OverflowError, RecursionError):
                 result["rejected_packets"] += 1

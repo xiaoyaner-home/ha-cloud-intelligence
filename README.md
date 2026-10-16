@@ -26,10 +26,41 @@ No vendor affiliation or certification is implied.
   poll recovered automatically. Extended unattended operation, visual browser QA
   and other models remain outside the verified scope.
 
-There are **no operating controls**. Polling does send one fixed `refresh=1`
-report request through a property/set resource. It is not passive monitoring or a
-GET-only read, and it does not change pressure, mode or power settings. No arbitrary
-set/invoke endpoint, refresh button or automatic command retry is exposed.
+Polling sends one fixed `refresh=1` report request per session. The default remains
+12 read-only entities. The only opt-in operating extension is experimental enable
+permission (`switch`), not motor running (`run`); pressure, mode and speed writes,
+arbitrary setters, refresh buttons and automatic command retries remain forbidden.
+
+## Experimental enable control (not live-device validated)
+
+In the entry's options, explicitly enable `enable_power_control` (default false).
+Options reload the existing entry; the new HA standard switch has a separate
+control-role unique ID and preserves all read/device/config identities. Use HA
+`switch.turn_off` to remove enable permission, and `switch.turn_on` to restore it,
+targeting the added switch entity. This is an interface for a separately designed
+refill interlock, not an automatic refill controller or a safety-rated stop.
+
+Each call accepts only a bool. A fresh full valid pre-read and a single fixed
+`{"switch":0}` or `{"switch":1}` send share an authenticated Observe session.
+Already at target is a no-op. Verification establishes a new authenticated
+Observe token/key window AFTER send on the same endpoint, under one exclusive
+10-second budget, obtains all 12 states, checks the target and unchanged
+`presSet/mode/propor/tarSpeed`. Old-session packets and set/ACK200 cannot confirm.
+Measurement/actual-speed changes are allowed. No device timestamp is assumed.
+
+A send attempt followed by timeout, cancellation, lost response or failed checks
+is outcome unknown, never optimistic success and never automatically retried.
+The HA entities become unavailable until a successful read. A recovery guard must
+read and assess state before deciding anything; do not retry or resume blindly.
+Disabled options refuse direct/stale entity calls; HA skips an unloaded switch
+with its normal unavailable-target warning and performs no write.
+ALCS opt 1 still has no packet MAC/replay protection: the new window rejects old
+session packets, not all malicious replay or device-side cached state.
+
+This candidate has only offline synthetic tests, no physical switch-write test,
+no production approval and no root-cause-fix claim. Independent review and separately
+authorized physical off/on, unchanged-setting, motor/enable, loss/cancellation,
+refill recovery and long-running/firmware acceptance remain release gates.
 
 ## Endpoint-stability candidate (not yet live-validated)
 
@@ -128,7 +159,8 @@ is for manual installation.
 Further testing is needed for firmware differences, credential expiry/revocation,
 extended unattended operation and browser visual QA.
 Complete account discovery, Google sign-in, automatic renewal and operating
-controls are outside this candidate. Basic UI locales are en, zh-Hans, zh-Hant and
+controls other than the opt-in enable switch are outside this candidate. Basic UI
+locales are en, zh-Hans, zh-Hant and
 ja, with English fallback; this is not a claim of full language coverage.
 
 ## Development

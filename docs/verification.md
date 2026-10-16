@@ -25,7 +25,7 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make check-ha`: a disposable `--platform linux/amd64 --rm --network none`
   container, memory 2 GiB / CPU 2, with only this checkout bind-mounted at `/work`.
   Actual HA 2026.9.1 / Python 3.14.6, cryptography 48.0.1, coverage 7.16.0 are checked
-  at runtime. It runs all tests and combined branch coverage ≥90%, plus two
+  at runtime. It runs all tests and combined branch coverage ≥90%, plus four
   additional HA/protocol mutations. No shared virtual environment is modified.
 - `make package`: validates local manifest/HACS/locale shape, both HACS and Home Assistant
   brand icon copies (256x256 and 512x512), and builds a deterministic ZIP containing the
@@ -34,7 +34,31 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make external-links`: optional bounded HTTP link audit, separate from default
   offline checks; not an install or release gate that runs silently.
 
-## Recorded candidate check
+## Experimental power candidate offline check
+
+`make check` passes with 29 Python 3.13.12 core tests (99% branch-enabled coverage)
+and 205 tests in actual HA 2026.9.1 / Python 3.14.6 (93% combined branch-enabled
+coverage). The HA count includes core cases, not 205 additional tests. All six
+isolated mutation baselines pass and all six mutants fail the intended assertions.
+New `power.py`, `switch.py` and the coordinator have 100% statement/branch coverage;
+the client is 97%, transport 92%, including retained pre-existing paths.
+
+RED was recorded before the new API/platform existed, then GREEN exercised strict
+permission/bool/model/input boundaries, both fixed encodings, both-direction no-op,
+full pre-read validity/proof/token/session/peer/URI gates, single send, ignored ACK
+and set200, unchanged target/settings rejection, old-session packet exclusion,
+new post-send verification, lost replies, short sends, timeout/cancellation,
+shared read/write exclusion, independent clients, actual loopback source-port
+reuse, real-client standard HA service calls, non-optimism, unload cancellation
+and socket release, option reload and all original read/device/config identities.
+Only the explicitly superseded no-switch packaging assertion changed to an
+exact narrow-platform/default-off contract; all other existing assertions remain.
+Synthetic inputs only; container networking is disabled, real UDP is loopback only.
+No physical switch write, online device/HA access or credential-store access was
+performed. This is a candidate, not a release, root-cause fix, formal independent
+review or live-device validation. Physical gates are in [requirements](requirements.md).
+
+## Recorded earlier read-only candidate check
 
 The local core/HA/package checks completed successfully: 29 core tests on Python 3.13.12
 with 99% core branch-enabled coverage, and 173 tests in the real HA container with 91%
@@ -65,7 +89,9 @@ network is additionally disabled.
 
 Two original core mutations corrupt running-vs-power separation and unknown-model
 write permissions. Two adapter mutations conflate the actual HA power/run binary
-states and reject valid encrypted content-format 0. Each runs in a distinct
+states and reject valid encrypted content-format 0. Two additional power mutations
+invert the fixed switch payload and bypass preservation of other writable settings.
+Each runs in a distinct
 throwaway repository copy, requires an unmodified passing baseline and an actual
 assertion failure (not import/tool failure), and leaves working source unchanged.
 

@@ -12,6 +12,7 @@
 | `config_flow.py` | Single-device import, same-device reauth/reconfigure and polling options |
 | `coordinator.py` | Low-frequency local polling, HA auth/retry/availability, pending-read cancellation |
 | `entity.py`, `sensor.py`, `binary_sensor.py` | Stable registry identity and 12 native read-only states |
+| `power.py`, `switch.py` | Safe power outcomes and opt-in non-optimistic standard enable switch |
 | `diagnostics.py` | Explicit safe metadata allowlist; no credentials, identities, addresses or state values |
 | `translations/`, `strings.json` | Four basic UI locales with English fallback |
 | `tests/ha/`, `tests/protocol/` | Actual HA lifecycle, isolated install, independent synthetic protocol server/oracle |
@@ -62,11 +63,28 @@ auth on the same endpoint is not a proven remote-cleanup mechanism. No heartbeat
 Observe cancellation or hardware root-cause fix is claimed. Independent review
 and a restricted live long-stability comparison remain gates.
 
-Only the literal `refresh=1` report request can reach a property/set resource. It
-is attempted once after subscription success; transport ACKs, subscription or
-refresh acceptance do not prove telemetry. Unknown profiles are rejected before
-this operation. No operation changes power/mode/pressure/speed settings. There is
-no arbitrary setter, custom write service or writable HA platform.
+Polls allow only the literal `refresh=1` report request, once after subscription.
+The experimental `LocalClient.set_power(bool)` extension is strict opt-in (default
+false), and shares that client's immediate-fail read/write gate, stable endpoint
+and 10-second total budget. It validates a fresh full pre-read in the same
+session, records five writable settings, no-ops at target, otherwise sends exactly
+one fixed switch=0/1. It closes that socket and establishes a new authenticated
+Observe token/key window AFTER send, continuously under the gate/deadline. All
+12 valid states must arrive anew: target switch and unchanged other four settings
+are mandatory; actual measurements/speed may change. Neither same-session queued
+old target reports nor ACK/set200 prove success. No pre-write snapshot is merged.
+Opt 1 still cannot prove device source time or provide MAC/anti-replay protection.
+
+`power.py` defines safe results and sent/uncertain unknown/cancellation outcomes.
+The send-attempt flag is set synchronously before sendto; no retry follows any
+unknown outcome. `PowerCancelled` remains asyncio cancellation; the coordinator
+wraps unknown service errors with the same flags, marks states unavailable and
+tracks/cancels/awaits controls on unload. No long-lived listener or new client.
+`switch.py` adds only an opt-in standard switch with a control-role ID on the same
+device; all 12 read IDs and config identity remain unchanged. Options use existing
+reload listeners and permission is checked on every call, including stale entities.
+No arbitrary setter, pressure/mode/speed write or custom write service exists.
+No live switch-write, root-cause-fix or production approval is claimed.
 
 Initial failures use HA's standard ConfigEntryNotReady or ConfigEntryAuthFailed
 paths. Later connection failures make coordinator entities unavailable; auth

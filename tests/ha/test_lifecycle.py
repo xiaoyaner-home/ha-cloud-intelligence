@@ -23,7 +23,9 @@ from custom_components.cloud_intelligence._core import WILO_MODEL_KEY, parse_sna
 from custom_components.cloud_intelligence.client import CannotConnect, InvalidAuth, LocalSnapshot
 from custom_components.cloud_intelligence.diagnostics import async_get_config_entry_diagnostics
 from custom_components.cloud_intelligence.entity import identity
+from tests.protocol.fixtures import report
 from tests.protocol.test_client import DATA as PROTOCOL_DATA
+from tests.protocol.test_client import LanSocket
 from tests.protocol.test_endpoint import BoundLanSocket
 
 DATA = dict(
@@ -397,6 +399,239 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 translations["component.cloud_intelligence.config.step.user.title"], title
             )
+
+    async def test_power_opt_in_services_reload_identity_and_two_devices(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence._core import entity_unique_id
+        from custom_components.cloud_intelligence.power import PowerResult
+        from custom_components.cloud_intelligence.switch import PowerSwitch
+
+        a = await self.add()
+        b = await self.add({**DATA, "deviceName": "SYNTHETIC_SECOND"})
+        registry = er.async_get(self.hass)
+        before = {e.entity_id: (e.unique_id, e.device_id) for e in registry.entities.values()}
+        old_data = dict(a.data)
+        with patch.object(a.runtime_data.client, "set_power", new=AsyncMock()) as setter:
+            # Even direct calls to a stale/manually constructed entity fail closed.
+            entity = PowerSwitch(a.runtime_data, a)
+            with self.assertRaises(HomeAssistantError):
+                await entity.async_turn_off()
+            setter.assert_not_called()
+        flow = await self.hass.config_entries.options.async_init(a.entry_id)
+        await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"scan_interval": 120, "enable_power_control": True}
+        )
+        await self.hass.async_block_till_done()
+        self.assertTrue(a.runtime_data.client.enable_power_control)
+        self.assertFalse(b.runtime_data.client.enable_power_control)
+        self.assertEqual(dict(a.data), old_data)
+        self.assertEqual(len(registry.entities), 25)
+        for entity_id, values in before.items():
+            self.assertEqual(
+                (registry.entities[entity_id].unique_id, registry.entities[entity_id].device_id),
+                values,
+            )
+        control = next(
+            e
+            for e in er.async_entries_for_config_entry(registry, a.entry_id)
+            if e.domain == "switch"
+        )
+        self.assertEqual(
+            control.unique_id,
+            entity_unique_id(
+                "alcs-local:" + DATA["productKey"], DATA["deviceName"], "switch", role="control"
+            ),
+        )
+        self.assertEqual(self.hass.states.get(control.entity_id).state, "on")
+        with patch.object(
+            a.runtime_data.client,
+            "set_power",
+            new=AsyncMock(return_value=PowerResult(True, reading({**VALUES, "switch": 0}), {})),
+        ) as setter:
+            await self.hass.services.async_call(
+                "switch", "turn_off", {"entity_id": control.entity_id}, blocking=True
+            )
+            setter.assert_awaited_once_with(False)
+        self.assertEqual(self.hass.states.get(control.entity_id).state, "off")
+        with patch.object(
+            a.runtime_data.client,
+            "set_power",
+            new=AsyncMock(return_value=PowerResult(True, reading(), {})),
+        ) as setter:
+            await self.hass.services.async_call(
+                "switch", "turn_on", {"entity_id": control.entity_id}, blocking=True
+            )
+            setter.assert_awaited_once_with(True)
+        self.assertEqual(self.hass.states.get(control.entity_id).state, "on")
+        self.hass.config_entries.async_update_entry(a, options={"enable_power_control": False})
+        await self.hass.async_block_till_done()
+        self.assertFalse(a.runtime_data.client.enable_power_control)
+        with patch.object(a.runtime_data.client, "set_power", new=AsyncMock()) as setter:
+            # HA skips an unloaded target with its standard unavailable warning.
+            await self.hass.services.async_call(
+                "switch", "turn_on", {"entity_id": control.entity_id}, blocking=True
+            )
+            self.assertEqual(self.hass.states.get(control.entity_id).state, "unavailable")
+            with self.assertRaises(HomeAssistantError):
+                await entity.async_turn_on()  # stale entity still refuses explicitly
+            setter.assert_not_called()
+
+    async def test_power_unknown_unavailable_and_unload_cancels_write(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence.power import PowerCancelled, PowerOutcomeUnknown
+
+        entry = await self.add()
+        self.hass.config_entries.async_update_entry(entry, options={"enable_power_control": True})
+        await self.hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        control = next(
+            e
+            for e in er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
+            if e.domain == "switch"
+        )
+        with patch.object(
+            coordinator.client, "set_power", new=AsyncMock(side_effect=PowerOutcomeUnknown)
+        ):
+            with self.assertRaises(HomeAssistantError) as error:
+                await self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": control.entity_id}, blocking=True
+                )
+            self.assertTrue(error.exception.sent and error.exception.uncertain)
+        self.assertEqual(self.hass.states.get(control.entity_id).state, "unavailable")
+        started, closed = asyncio.Event(), asyncio.Event()
+
+        async def blocked(enabled):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise PowerCancelled from None
+            finally:
+                closed.set()
+
+        with patch.object(coordinator.client, "set_power", side_effect=blocked):
+            task = asyncio.create_task(coordinator.async_set_power(False))
+            await asyncio.wait_for(started.wait(), 1)
+            self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
+            results = await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(closed.is_set())
+        self.assertIsInstance(results[0], asyncio.CancelledError)
+        self.assertIsNone(coordinator.power_pending)
+        self.assertTrue(coordinator._shutdown_requested)
+
+    async def test_power_service_real_client_and_coordinator_exclusion(self):
+        from homeassistant.exceptions import HomeAssistantError
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        from custom_components.cloud_intelligence import telemetry
+        from tests.protocol.test_client import VALUES as WIRE_VALUES
+        from tests.protocol.test_power import PowerSocket
+
+        entry = await self.add()
+        self.hass.config_entries.async_update_entry(entry, options={"enable_power_control": True})
+        await self.hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        coordinator.client.data = dict(PROTOCOL_DATA)
+        sockets = [
+            LanSocket(),
+            PowerSocket(notifications=[(101, report(WIRE_VALUES))]),
+            PowerSocket(notifications=[(301, report({**WIRE_VALUES, "switch": 0}))]),
+        ]
+        sockets[2].block = True
+        control = next(
+            e
+            for e in er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
+            if e.domain == "switch"
+        )
+        with patch.object(telemetry, "Socket", side_effect=sockets):
+            task = asyncio.create_task(
+                self.hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": control.entity_id}, blocking=True
+                )
+            )
+            await asyncio.wait_for(sockets[2].entered.wait(), 1)
+            # No optimistic off while waiting for a fresh verification report.
+            self.assertEqual(self.hass.states.get(control.entity_id).state, "on")
+            with self.assertRaises(HomeAssistantError):
+                await coordinator.async_set_power(True)
+            with self.assertRaises(UpdateFailed):
+                await coordinator._async_update_data()
+            sockets[2].block = False
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(all(sock.closed for sock in sockets))
+        self.assertFalse(coordinator.client._reading)
+        # Exercise the successful real wire path through the standard HA service.
+        sockets = [
+            LanSocket(),
+            PowerSocket(notifications=[(101, report(WIRE_VALUES))]),
+            PowerSocket(notifications=[(301, report({**WIRE_VALUES, "switch": 0}))]),
+        ]
+        await coordinator.async_refresh()  # synthetic read restores availability
+        with patch.object(telemetry, "Socket", side_effect=sockets):
+            await self.hass.services.async_call(
+                "switch", "turn_off", {"entity_id": control.entity_id}, blocking=True
+            )
+        self.assertEqual(self.hass.states.get(control.entity_id).state, "off")
+        self.assertEqual(len(sockets[1].power_requests), 1)
+        self.assertTrue(all(sock.closed for sock in sockets))
+        self.assertFalse(
+            self.hass.states.get(control.entity_id).attributes.get("assumed_state", False)
+        )
+        for enabled in (1, "false", None):
+            with self.assertRaises(TypeError):
+                await coordinator.async_set_power(enabled)
+        for error in (CannotConnect, InvalidAuth):
+            with patch.object(coordinator.client, "set_power", new=AsyncMock(side_effect=error)):
+                with self.assertRaises(HomeAssistantError):
+                    await coordinator.async_set_power(False)
+        with patch.object(coordinator, "pending", asyncio.current_task()):
+            with self.assertRaises(HomeAssistantError):
+                await coordinator.async_set_power(False)
+
+    async def test_power_unload_real_client_closes_all_sockets(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence import telemetry
+        from tests.protocol.test_client import VALUES as WIRE_VALUES
+        from tests.protocol.test_endpoint import BoundPowerSocket
+
+        entry = await self.add()
+        self.hass.config_entries.async_update_entry(entry, options={"enable_power_control": True})
+        await self.hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        coordinator.client.data = dict(PROTOCOL_DATA)
+        sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sink.bind(("127.0.0.1", 0))
+        self.addCleanup(sink.close)
+        sockets = [
+            BoundPowerSocket(sink),
+            BoundPowerSocket(sink, notifications=[(101, report(WIRE_VALUES))]),
+            BoundPowerSocket(sink),
+        ]
+        for sock in sockets:
+            self.addCleanup(sock.close)
+        sockets[2].block = True
+        with patch.object(telemetry, "Socket", side_effect=sockets):
+            task = asyncio.create_task(coordinator.async_set_power(False))
+            await asyncio.wait_for(sockets[2].entered.wait(), 1)
+            self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
+            await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(all(sock.closed for sock in sockets))
+        self.assertEqual(len(sockets[1].power_requests), 1)
+        self.assertFalse(coordinator.client._reading)
+        self.assertIsNone(coordinator.power_pending)
+        self.assertTrue(coordinator.closed)
+        self.assertTrue(all(sock.udp.socket.fileno() == -1 for sock in sockets))
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind(sockets[2].actual)
+        finally:
+            probe.close()
+        with self.assertRaises(HomeAssistantError):
+            await coordinator.async_set_power(True)
 
     async def test_failed_platform_unload_keeps_coordinator(self):
         entry = await self.add()

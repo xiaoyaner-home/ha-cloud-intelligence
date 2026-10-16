@@ -97,7 +97,11 @@ class LocalOptions(config_entries.OptionsFlow):
                     vol.Required(
                         "scan_interval",
                         default=self.config_entry.options.get("scan_interval", DEFAULT_INTERVAL),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_INTERVAL, max=3600))
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_INTERVAL, max=3600)),
+                    vol.Optional(
+                        "enable_power_control",
+                        default=self.config_entry.options.get("enable_power_control", False),
+                    ): bool,
                 }
             ),
         )

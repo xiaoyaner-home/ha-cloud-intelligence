@@ -3,11 +3,17 @@
 ## Status and scope
 
 Pre-release candidate, independent and unofficial. It imports a user's own local
-device authorization and exposes read-only HA entities for Wilo HiMulti-1 WiFi.
-There is no cloud authentication, account discovery or operating-control feature.
-Polling includes one fixed `refresh=1` telemetry report request, not an operating
-setting. Do not use this integration for pressure regulation, protection or any
-safety function. See [requirements](docs/requirements.md).
+device authorization and exposes 12 read-only HA entities for Wilo HiMulti-1 WiFi.
+There is no cloud authentication or account discovery. The sole operating exception
+is an opt-in experimental enable-permission switch, default false, exact model
+only, with full pre-read, fixed one-shot switch=0/1 and new post-send authenticated
+Observe window verification of target and unchanged other settings. Unknown
+send outcomes (including cancellation) never trigger retry or optimistic state.
+Polling includes one fixed `refresh=1` request per report session. No pressure,
+mode, speed or arbitrary setter exists. Physical switch writes are not yet tested.
+This interface is not an automatic refill controller or safety-rated stop. Do not
+use this integration for pressure regulation, protection or any safety function.
+See [requirements](docs/requirements.md).
 
 ## Credentials and local protocol
 

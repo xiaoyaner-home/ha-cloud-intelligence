@@ -5,7 +5,8 @@
 An independent community HA custom integration with HACS repository layout. The
 first slice imports **one device's local authorization**, not an account session
 or cloud discovery. Complete Google sign-in, account discovery, automatic renewal,
-other device adapters and operating controls are separate future work.
+other device adapters and operating controls except the explicitly opt-in,
+experimental Wilo enable-permission switch are separate future work.
 
 The installable directory is `custom_components/cloud_intelligence`. It contains
 all its own protocol, model/identity core, HA config flow, coordinator, entities,
@@ -70,17 +71,53 @@ cleanup, heartbeat or firmware/client root-cause diagnosis is assumed. Independe
 review and live long-running validation remain required; no root-cause fix or
 release is claimed.
 
-The **only** property/set operation is a fixed report request:
+Polling property/set is a fixed report request:
 
 - CoAP GET `/sys/{productKey}/{deviceName}/thing/service/property/set`
 - method `thing.service.property.set`, `params={"refresh":1}`
 - only after the exact supported profile is authenticated and subscribed
-- one send attempt, no retry, no arbitrary property/value/path input
+- one send attempt per report session, no retry, no arbitrary property/value/path
 
-It requests telemetry, not operating settings. This is not a passive or GET-only
-protocol. All HA entities are read-only. No switch, number, select, button or custom
-control service is registered. Device writes other than this bounded report request
-are forbidden. Declared ranges are metadata, not safe-setting recommendations.
+It requests telemetry, not operating settings; it is not passive or GET-only.
+The only operating exception is the following opt-in experimental contract:
+
+- `LocalClient.set_power(enabled: bool)` rejects non-bool and unknown models before
+  network activity. Both client and HA coordinator require explicit
+  `enable_power_control=true`; default false retains the 12 read entities only.
+- One HA standard switch, control-role unique ID, same device/config entry.
+  Options reload existing entries. `switch.turn_on` / `switch.turn_off` target the
+  added entity; no custom setter service. Switch is enable permission, not `run`.
+- Shared client, stable endpoint and immediate-fail exclusive read/write gate;
+  one whole 10-second operation budget. No queue, new bypass client or poll race.
+- Full valid fresh pre-read in the same authenticated Observe session as the send.
+  Record `switch/presSet/mode/propor/tarSpeed`; at target is no-op. Otherwise send
+  only fixed `{"switch":0}` or `{"switch":1}`, exactly once, no retransmission.
+- Verification starts a new authenticated Observe token/key window AFTER send,
+  continuously under the same exclusive gate, peer, credentials, endpoint and
+  deadline. This explicitly separates asynchronous old-session packets from proof.
+  No pre-write state is merged. Obtain all 12 valid states anew, verify target
+  switch and unchanged presSet/mode/propor/tarSpeed. Actual speed/measurements may
+  change. Empty ACK, set200 and old-session target reports are never proof.
+- `PowerResult(sent, snapshot, before, uncertain=False)` reports confirmed state or
+  no-op. `PowerOutcomeUnknown` and `PowerCancelled` carry `sent=True, uncertain=True`
+  after the send-attempt boundary (not delivery proof), without private data.
+  Cancellation remains an asyncio cancellation; HA wraps non-cancel unknown in
+  `PowerServiceOutcomeUnknown` with the same flags and marks entities unavailable.
+  No automatic retry/restore; recovery must read and assess actual state first.
+- Disabled direct/stale entity calls fail. HA skips an unloaded switch through its
+  normal unavailable-target behavior without writing. Unload cancels/awaits both
+  reads and controls, closing every socket and releasing the guard.
+- No pressure/mode/speed or other setting, arbitrary input, number/select/button,
+  cloud fallback, external script or persistent process. This is an interlock
+  interface, not an automatic refill state machine or safety-rated stop.
+
+Only local receive times exist; no device timestamp or full freshness/anti-replay
+proof is promised. Opt 1 has no packet MAC: a new window excludes old-session
+traffic but cannot prove absence of device-side cached state or malicious replay.
+This candidate has no live switch-write validation, production approval or
+root-cause-fix claim. Independent review and separately authorized physical off/on,
+unchanged settings, enable-vs-motor, loss/cancel/recovery and long-running/firmware
+acceptance remain gates. Declared ranges are metadata, not safe-setting advice.
 
 Observe GET uses `/sys/{productKey}/{deviceName}/thing/event/property/post`.
 Notifications have exact method/version/envelope/property allowlists and session
@@ -134,7 +171,7 @@ supported public product key to this profile. All 12 states are instantiated in 
 including diagnostic fault-code and software-version sensors. Six dormant control
 metadata descriptions in the pure core do not enable any HA controls.
 
-| Property | Type / TSL access | Read surface | Future control (disabled) | Metadata / meaning |
+| Property | Type / TSL access | Read surface | Control metadata (only switch opt-in) | Metadata / meaning |
 | --- | --- | --- | --- | --- |
 | `switch` | bool / rw | binary_sensor | switch | Powered/enabled, **not motor running** |
 | `temperature` | int / r | sensor | — | 0–100, step 1, °C |
@@ -159,7 +196,8 @@ version diagnostics, and excludes the `refresh` command. The separate
 commands. The HA adapter also uses version in DeviceInfo.
 Unknown models and additional unknown properties get disabled-by-default diagnostic
 sensor/binary-sensor descriptions only. Declared TSL access and effective write
-permission are separate fields; effective writes are always false in this version.
+permission are separate fields; pure-core effective writes remain false. The HA
+adapter's explicit enable-only permission is not inferred from metadata.
 
 Core speed metadata retains the TSL `r/min`. The HA adapter normalizes it
 to `rpm` with no multiplier; it must not apply a linear-speed device class. Read-only
@@ -194,7 +232,7 @@ A future cloud/shared-device adapter must explicitly review migration semantics.
 - [Packaging](../tests/ha/test_package.py): deterministic ZIP and standalone imports
   using only the installed component and real HA, without the repository core.
 - [Verification](verification.md): pinned tools, branch coverage ≥90%, exact core
-  parity and two core plus two HA/protocol assertion-killing mutations.
+  parity and two core plus four HA/protocol assertion-killing mutations.
 
 Default checks are offline and never contact production. Further release gates
 include independent review, real-device acceptance of this actual adapter,

@@ -57,12 +57,16 @@
       "init": {
         "title": "Local polling",
         "data": {
-          "scan_interval": "Poll interval (seconds, 60–3600)"
+          "scan_interval": "Poll interval (seconds, 60–3600)",
+          "enable_power_control": "Enable experimental power control (not live-device validated)"
         }
       }
     }
   },
   "entity": {
+    "switch": {
+      "power_control": {"name": "Enable permission (experimental)"}
+    },
     "sensor": {
       "temperature": {
         "name": "Water temperature"
