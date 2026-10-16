@@ -64,6 +64,10 @@ class LocalClient:
     # Do not allow dataclass representations to expose authorization.
     data: dict = field(repr=False)
     timeout: float = 10.0
+    _endpoint: telemetry._Endpoint = field(
+        default_factory=telemetry._Endpoint, init=False, repr=False
+    )
+    _reading: bool = field(default=False, init=False, repr=False)
 
     async def _identity(self, peer, deadline):
         sock = telemetry.Socket()
@@ -126,6 +130,16 @@ class LocalClient:
             sock.close()
 
     async def read(self, *, require_complete=False) -> LocalSnapshot:
+        """Reject overlapping reads immediately; no queue outside the total budget."""
+        if self._reading:
+            raise CannotConnect("Read already in progress")
+        self._reading = True
+        try:
+            return await self._read_once(require_complete=require_complete)
+        finally:
+            self._reading = False
+
+    async def _read_once(self, *, require_complete) -> LocalSnapshot:
         self.data = validate_input(self.data)
         if type(self.timeout) not in (float, int) or not 0 < self.timeout <= 10:
             raise ValueError("Invalid timeout")
@@ -145,9 +159,12 @@ class LocalClient:
                     request_report=True,
                     maxwait=remaining,
                     allow_network=True,
+                    _endpoint=self._endpoint,
                 )
         except (TimeoutError, OSError):
             raise CannotConnect from None
+        if result["status"] == "bind_error":
+            raise CannotConnect("UDP endpoint bind failed")
         if result["status"] == "auth_rejected":
             raise InvalidAuth
         if not result["auth_verified"] or not result["subscribed"] or not result["telemetry"]:

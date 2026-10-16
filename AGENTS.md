@@ -24,6 +24,14 @@ Read [requirements](docs/requirements.md), [architecture](docs/architecture.md) 
   identity check, auth, Observe registration, one report request, bounded receive.
   Return immediately on all 12 actual states; ACK/refresh echo is not success.
 - All UDP receives must be nonblocking/cancellable; close sockets on every exit.
+- Each client remembers its first successfully bound auth/Observe source port
+  synchronously, including on failure/cancellation, and rebinds it on later reads.
+  Identity probes stay independent but exact on every read. Reject same-client
+  overlap immediately, release the guard on every exit, and retain the 10-second
+  total budget. Bind conflicts fail clearly: no fallback, retries, reuse options,
+  shared sockets, persistent listener or port in config/diagnostics/repr.
+  New clients/restarts may choose new ports; local close is not remote teardown.
+  Endpoint stability is a Beta live-comparison candidate, not a proven root-cause fix.
 - Keep exact peer/token/URI/session/envelope checks, ctype 0 encrypted decoding,
   fixed-zero Observe support and session-scoped bounded MID/digest deduplication.
   Opt 1 has no packet MAC/replay protection: do not claim otherwise.

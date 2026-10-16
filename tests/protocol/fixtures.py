@@ -130,6 +130,9 @@ class FakeSocket:
     def bind(self, a):
         self.bound = a
 
+    def getsockname(self):
+        return (self.bound[0], self.bound[1] or 49152)
+
     def settimeout(self, v):
         self.timeout = v
 

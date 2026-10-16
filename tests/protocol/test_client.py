@@ -375,7 +375,10 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(telemetry.socket, "socket", return_value=sock):
             udp = telemetry.Socket()
         sock.setblocking.assert_called_once_with(False)
+        sock.setsockopt.assert_not_called()
         udp.bind(("0.0.0.0", 0))
+        sock.getsockname.return_value = ("0.0.0.0", 49152)
+        self.assertEqual(udp.getsockname(), ("0.0.0.0", 49152))
         udp.settimeout(0.1)
         udp.sendto(b"packet", PEER)
         with patch.object(

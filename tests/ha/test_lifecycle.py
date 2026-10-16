@@ -6,6 +6,7 @@ No Home Assistant classes are replaced with local stand-ins.
 
 import asyncio
 import json
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,8 @@ from custom_components.cloud_intelligence._core import WILO_MODEL_KEY, parse_sna
 from custom_components.cloud_intelligence.client import CannotConnect, InvalidAuth, LocalSnapshot
 from custom_components.cloud_intelligence.diagnostics import async_get_config_entry_diagnostics
 from custom_components.cloud_intelligence.entity import identity
+from tests.protocol.test_client import DATA as PROTOCOL_DATA
+from tests.protocol.test_endpoint import BoundLanSocket
 
 DATA = dict(
     name="Synthetic pump",
@@ -245,6 +248,42 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
         await asyncio.gather(task, return_exceptions=True)
         self.assertTrue(closed.is_set())
+
+    async def test_unload_cancels_real_client_and_releases_loopback_endpoint(self):
+        entry = await self.add()
+        coordinator = entry.runtime_data
+        # Restore the actual client; only its transport remains synthetic.
+        self.patcher.stop()
+        coordinator.client.data = dict(PROTOCOL_DATA)
+        sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sink.bind(("127.0.0.1", 0))
+        self.addCleanup(sink.close)
+        discovery, state = BoundLanSocket(sink), BoundLanSocket(sink)
+        self.addCleanup(discovery.close)
+        self.addCleanup(state.close)
+        state.block = True
+        with patch(
+            "custom_components.cloud_intelligence.telemetry.Socket",
+            side_effect=[discovery, state],
+        ):
+            task = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(state.entered.wait(), 1)
+            diagnostics = await async_get_config_entry_diagnostics(self.hass, entry)
+            self.assertNotIn(str(state.actual[1]), json.dumps(diagnostics))
+            self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
+            await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(discovery.closed and state.closed)
+        self.assertFalse(coordinator.client._reading)
+        self.assertIsNone(coordinator.pending)
+        self.assertTrue(coordinator._shutdown_requested)
+        self.assertFalse(coordinator._listeners)
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind(state.actual)
+        finally:
+            probe.close()
+        self.assertNotIn("port", entry.data)
+        self.assertNotIn(str(state.actual[1]), repr(coordinator.client))
 
     async def test_offline_first_setup_and_invalid_auth(self):
         self.stub.side_effect = CannotConnect

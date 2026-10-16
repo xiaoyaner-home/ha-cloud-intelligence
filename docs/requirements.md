@@ -48,6 +48,28 @@ subscription, report request and receive. Socket receives are nonblocking and
 cancellable, with sockets closed in `finally`. Unload stops the coordinator and
 cancels any pending read. There are no persistent UDP listeners or worker threads.
 
+Within one `LocalClient`, the first successful authentication-socket bind lets the
+OS choose a UDP source port; every later auth/Observe session rebinds that port,
+including after rejection, error, timeout or cancellation. The port is remembered
+synchronously at bind, not taken from a successful session result. Identity probes
+remain independent ephemeral sockets and must validate the exact device before
+every authentication. Overlapping reads on the same client fail immediately,
+without opening sockets or queuing; each accepted read retains the same 10-second
+total identity/auth/subscription/report/receive budget. Cancellation always releases
+the read guard. Separate clients own separate in-memory endpoint state, not shared
+sockets; no reuse socket options, configured/global fixed port or persistence are
+introduced. Ports are not reserved while sockets are closed: a conflicting bind
+fails clearly, with no alternate-port fallback or extra retries. A new client or
+process may choose a new port. The port is absent from config, diagnostics and repr.
+
+This Beta endpoint-stability candidate reduces endpoint churn for a separately
+approved single-variable live comparison. Local close is not remote session or
+observer teardown; same-endpoint reauthentication may permit reuse/cleanup but
+neither guarantees it nor recovers an unresponsive device. No RFC Observe=1/RST
+cleanup, heartbeat or firmware/client root-cause diagnosis is assumed. Independent
+review and live long-running validation remain required; no root-cause fix or
+release is claimed.
+
 The **only** property/set operation is a fixed report request:
 
 - CoAP GET `/sys/{productKey}/{deviceName}/thing/service/property/set`
@@ -162,6 +184,10 @@ A future cloud/shared-device adapter must explicitly review migration semantics.
 - [Client/oracle tests](../tests/protocol/test_client.py): exact local identity,
   authorization, complete/partial handling, timeout/cancellation and independent
   AES ECB/XOR oracle.
+- [Endpoint lifecycle](../tests/protocol/test_endpoint.py): real loopback UDP source
+  ports across rounds/errors/cancellation, exclusive bind conflicts, immediate
+  same-client overlap rejection, independent clients and per-round socket release.
+  These tests establish lifecycle behavior, not a physical-device failure cause.
 - [Real HA lifecycle](../tests/ha/test_lifecycle.py): add, duplicate, multi-device,
   same/mismatched re-import, persisted restart, registries, all 12 states, options,
   unload, auth/retry/unavailable, diagnostics and actual language fallback loading.

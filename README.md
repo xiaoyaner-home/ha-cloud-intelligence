@@ -31,6 +31,25 @@ report request through a property/set resource. It is not passive monitoring or 
 GET-only read, and it does not change pressure, mode or power settings. No arbitrary
 set/invoke endpoint, refresh button or automatic command retry is exposed.
 
+## Endpoint-stability candidate (not yet live-validated)
+
+One client now remembers its first OS-selected auth/Observe UDP source port and
+rebinds it after success, failure, timeout or cancellation. Every read still checks
+the exact device identity using an independent ephemeral probe, authenticates,
+subscribes, requests one fixed report and closes its sockets. Same-client concurrent
+reads fail immediately; accepted reads retain the 10-second total budget. No port
+configuration, shared socket, reuse option, persistent listener or heartbeat is
+added. A conflicting bind fails rather than switching ports; the port is not
+reserved between reads, persisted, or exposed in diagnostics/repr. A new client or
+process may select a different port.
+
+This Beta change only reduces endpoint churn for a single-variable live comparison.
+The earlier live observations above do not validate this candidate. Local close
+is not remote session/observer teardown, and same-endpoint reauthentication is not
+a guaranteed cleanup or recovery. No Observe=1/RST cleanup or hardware root-cause
+fix is claimed. Independent review and restricted long-running device acceptance
+remain required before release.
+
 ## Prepare your authorization
 
 You must already have authorization for **your own device**, obtained using the
@@ -123,7 +142,8 @@ make check
 `make check` runs pure-core lint/contracts/link/mutation checks, then the real HA
 suite in a disposable `linux/amd64` 2026.9.1 container (`--network none`, 2 GiB,
 2 CPUs). Docker and the cached image are required; installation/image retrieval
-is separate. All data is synthetic and transports are blocked or stubbed. No
+is separate. All data is synthetic; device transports are blocked or stubbed, with
+real UDP endpoint tests restricted to loopback. No
 production HA directory is mounted. `make check-core` has no HA runtime dependency;
 `make check-ha` runs the container suite explicitly. Runtime dependency:
 `cryptography==48.0.1`, pinned by the component manifest.

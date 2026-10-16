@@ -42,6 +42,26 @@ are nonblocking and async receive waits are cancellable. Every socket closes in
 `finally`; no worker thread or long-lived Observe listener exists. A complete
 report returns immediately instead of waiting out the total receive budget.
 
+Each client privately owns a `telemetry._Endpoint` (port memory only, no socket).
+Its first successful auth-socket bind uses port 0 and synchronously stores the
+OS-selected port before any send or await. Subsequent sessions rebind it even after
+failure/cancellation; each socket still closes in `finally`. Identity probes keep
+independent ephemeral sockets and exact validation before every auth. No endpoint
+state enters entry storage, diagnostics or repr, and there is no shared socket or
+reuse option. Closed sockets do not reserve ports: conflicts fail explicitly with
+no port-changing fallback or increased retries. New clients/processes can select
+new ports; stability is not promised across restart or source-IP changes.
+
+`read` rejects same-client overlap immediately, before validation/network work;
+a `finally` releases its guard on every exit. There is no lock queue or added wait
+outside the existing 10-second accepted-read budget. Other clients remain independent.
+Coordinator unload still cancels and awaits the active read, releasing its socket.
+This minimal Beta candidate changes endpoint allocation, not polling/Observe
+architecture. Local close does not tear down remote sessions/observers, and repeated
+auth on the same endpoint is not a proven remote-cleanup mechanism. No heartbeat,
+Observe cancellation or hardware root-cause fix is claimed. Independent review
+and a restricted live long-stability comparison remain gates.
+
 Only the literal `refresh=1` report request can reach a property/set resource. It
 is attempted once after subscription success; transport ACKs, subscription or
 refresh acceptance do not prove telemetry. Unknown profiles are rejected before
@@ -98,5 +118,6 @@ the repository root core on its import path.
 `make check-core` uses pinned Python 3.13 development tools. `make check-ha` uses
 actual HA 2026.9.1 / Python 3.14.6 in a disposable, resource-capped, network-disabled
 container with this checkout as its only bind mount. Synthetic socket/transport
-stubs block device networking. Offline correctness is not live acceptance of the
+stubs block device networking; endpoint lifecycle tests additionally bind/send real
+UDP only on loopback, using synthetic protocol replies. Offline correctness is not live acceptance of the
 adapter, a HACS listing, official certification or production validation.
