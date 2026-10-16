@@ -32,6 +32,9 @@ class Socket:
     def bind(self, address):
         self.socket.bind(address)
 
+    def getsockname(self):
+        return self.socket.getsockname()
+
     def settimeout(self, timeout):
         self.timeout = timeout
 
@@ -45,6 +48,19 @@ class Socket:
 
     def close(self):
         self.socket.close()
+
+
+class _Endpoint:
+    """Client-local port memory, not a listener or a reservation between reads."""
+
+    def __init__(self):
+        self._port = 0
+
+    def bind(self, sock, boundip):
+        sock.bind((boundip, self._port))
+        # Synchronous, immediately after bind: cancellation/errors later in the
+        # session must not lose the OS-selected port. Never retry on conflict.
+        self._port = sock.getsockname()[1]
 
 
 PRODUCT_KEY = "a15zaTr5sp1"  # public model key, NOT a device identity
@@ -236,7 +252,14 @@ def _inputs(boundip, candidate, credentials, request_report, maxwait, allow_netw
 
 
 async def run_once(
-    boundip, candidate, credentials, request_report=False, maxwait=10, *, allow_network=False
+    boundip,
+    candidate,
+    credentials,
+    request_report=False,
+    maxwait=10,
+    *,
+    allow_network=False,
+    _endpoint=None,
 ):
     """Authenticate, subscribe and collect a bounded local report; always close."""
     peer = _inputs(boundip, candidate, credentials, request_report, maxwait, allow_network)
@@ -323,7 +346,12 @@ async def run_once(
 
     try:
         sock = Socket()
-        sock.bind((boundip, 0))
+        if _endpoint is None:
+            sock.bind((boundip, 0))
+        else:
+            result["status"] = "bind_error"
+            _endpoint.bind(sock, boundip)
+        result["status"] = "auth_timeout"
         send("auth")
         for _ in range(MAX_PACKETS):
             left = deadline - time.monotonic()
@@ -459,9 +487,9 @@ async def run_once(
         else:
             result["status"] = "packet_limit"
     except OSError:
-        result["status"] = (
-            "transport_error"  # never serialize exceptions, packets, identity or keys
-        )
+        if result["status"] != "bind_error":
+            result["status"] = "transport_error"
+        # Never serialize exceptions, packets, identity, endpoint or keys.
     finally:
         window.clear()  # never carried across auth sessions/processes
         key, sid = None, None
