@@ -39,10 +39,10 @@ Wilo HiMulti-1 WiFi。它导入用户自己从 Android 云智能取得的单设�
 ### HACS 安装
 
 在 HACS 的 **自定义存储库** 中添加
-`https://github.com/xiaoyaner-home/ha-cloud-intelligence`，类型选 **Integration**，下载后重启 HA，
+`https://github.com/xiaoyaner0201/ha-cloud-intelligence`，类型选 **Integration**，下载后重启 HA，
 再到「设备与服务」添加 **Cloud Intelligence (Local)**。目前通过自定义仓提供 Beta，未收录进默认商店。
 
-也可从 [GitHub Releases](https://github.com/xiaoyaner-home/ha-cloud-intelligence/releases) 下载手动安装 ZIP。
+也可从 [GitHub Releases](https://github.com/xiaoyaner0201/ha-cloud-intelligence/releases) 下载手动安装 ZIP。
 ZIP 已含 `custom_components/cloud_intelligence/...` 路径，解压到 HA 配置目录后应存在
 `custom_components/cloud_intelligence/manifest.json`。HACS 使用仓库源文件安装，不消费这个手动 ZIP。
 不要复制仓库根目录的 `cloud_intelligence` 包。

@@ -5,10 +5,10 @@
     "@xiaoyaner0201"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/xiaoyaner-home/ha-cloud-intelligence",
+  "documentation": "https://github.com/xiaoyaner0201/ha-cloud-intelligence",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/xiaoyaner-home/ha-cloud-intelligence/issues",
+  "issue_tracker": "https://github.com/xiaoyaner0201/ha-cloud-intelligence/issues",
   "requirements": [
     "cryptography==48.0.1"
   ],
