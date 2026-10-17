@@ -587,9 +587,6 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             with patch.object(coordinator.client, "set_power", new=AsyncMock(side_effect=error)):
                 with self.assertRaises(HomeAssistantError):
                     await coordinator.async_set_power(False)
-        with patch.object(coordinator, "pending", asyncio.current_task()):
-            with self.assertRaises(HomeAssistantError):
-                await coordinator.async_set_power(False)
 
     async def test_power_unload_real_client_closes_all_sockets(self):
         from homeassistant.exceptions import HomeAssistantError
@@ -632,6 +629,344 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             probe.close()
         with self.assertRaises(HomeAssistantError):
             await coordinator.async_set_power(True)
+
+    async def power_poll_setup(self):
+        entry = await self.add()
+        self.hass.config_entries.async_update_entry(entry, options={"enable_power_control": True})
+        await self.hass.async_block_till_done()
+        self.patcher.stop()
+        coordinator = entry.runtime_data
+        coordinator.client.data = dict(PROTOCOL_DATA)
+        control = next(
+            e
+            for e in er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
+            if e.domain == "switch"
+        )
+        return entry, coordinator, control.entity_id
+
+    async def test_power_waits_inflight_poll_then_single_fresh_write(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=False)
+        pump.block_next = True
+        client = coordinator.client
+        with (
+            patch.object(telemetry, "Socket", side_effect=pump.socket),
+            patch.object(client, "set_power", wraps=client.set_power) as setter,
+        ):
+            poll = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            blocked = pump.blocked
+            control = asyncio.create_task(
+                self.hass.services.async_call(
+                    "switch", "turn_on", {"entity_id": target}, blocking=True
+                )
+            )
+            try:
+                await asyncio.sleep(0.05)
+                # RED on the old coordinator: actual PowerSwitch service refuses.
+                if control.done():
+                    await control
+                self.assertFalse(control.done())
+                setter.assert_not_called()
+                self.assertEqual(pump.writes, [])
+                blocked.release.set()
+                await asyncio.wait_for(asyncio.gather(poll, control), 2)
+            finally:
+                blocked.release.set()
+                await asyncio.gather(poll, control, return_exceptions=True)
+            setter.assert_awaited_once_with(True)
+        self.assertIs(coordinator.client, client)
+        self.assertEqual(pump.writes, [True])
+        self.assertEqual(self.hass.states.get(target).state, "on")
+        self.assertEqual(pump.maximum, 1)
+        self.assertEqual(pump.active, 0)
+        self.assertTrue(all(s.closed for s in pump.sockets))
+        self.assertIsNone(coordinator.power_pending)
+        self.assertIsNone(coordinator.pending)
+
+    async def wait_power_claim(self, coordinator):
+        async with asyncio.timeout(1):
+            while coordinator.power_pending is None:
+                await asyncio.sleep(0)
+
+    async def test_poll_failure_still_requires_own_fresh_control_pre_read(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, _ = await self.power_poll_setup()
+        for complete in (True, False):
+            with self.subTest(complete=complete):
+                pump = PumpIO(enabled=False)
+                pump.block_next = True
+                pump.failure_next = OSError("synthetic failed poll")
+
+                def factory(pump=pump, complete=complete):
+                    sock = pump.socket()
+                    if not complete and len(pump.sockets) == 3:
+                        sock.notifications = [(101, report({"switch": 0}))]
+                    return sock
+
+                with patch.object(telemetry, "Socket", side_effect=factory):
+                    poll = asyncio.create_task(coordinator.async_refresh())
+                    await asyncio.wait_for(pump.entered.wait(), 1)
+                    control = asyncio.create_task(coordinator.async_set_power(True))
+                    await self.wait_power_claim(coordinator)
+                    pump.blocked.release.set()
+                    if complete:
+                        result = await control
+                        self.assertTrue(result.sent and result.snapshot.complete)
+                    else:
+                        from homeassistant.exceptions import HomeAssistantError
+
+                        with self.assertRaises(HomeAssistantError):
+                            await control
+                        self.assertFalse(coordinator.last_update_success)
+                    await poll
+                self.assertEqual(pump.writes, [True] if complete else [])
+                self.assertEqual(pump.maximum, 1)
+                self.assertEqual(pump.active, 0)
+                self.assertIsNone(coordinator.power_pending)
+
+    async def test_control_claim_blocks_second_control_and_new_polls(self):
+        from homeassistant.exceptions import HomeAssistantError
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, _ = await self.power_poll_setup()
+        pump = PumpIO(enabled=False)
+        pump.block_next = True
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            poll = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            control = asyncio.create_task(coordinator.async_set_power(True))
+            await self.wait_power_claim(coordinator)
+            read = coordinator.pending
+            for _ in range(3):
+                with self.assertRaisesRegex(HomeAssistantError, "already in progress"):
+                    await coordinator.async_set_power(False)
+                with self.assertRaises(UpdateFailed):
+                    await coordinator._async_update_data()
+            self.assertIs(coordinator.pending, read)
+            self.assertEqual(len(pump.sockets), 1)
+            pump.blocked.release.set()
+            await asyncio.wait_for(asyncio.gather(poll, control), 1)
+        self.assertEqual(pump.writes, [True])
+        self.assertEqual(pump.maximum, 1)
+        self.assertIsNone(coordinator.power_pending)
+
+    async def test_wait_budget_timeout_and_cancel_do_not_cancel_read_or_write(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence import coordinator as module
+        from custom_components.cloud_intelligence import telemetry
+        from custom_components.cloud_intelligence.power import PowerCancelled
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, _ = await self.power_poll_setup()
+        self.assertEqual(module.POWER_SERVICE_BUDGET, 10)
+        for cancel in (False, True):
+            pump = PumpIO(enabled=False)
+            pump.block_next = True
+            with (
+                patch.object(telemetry, "Socket", side_effect=pump.socket),
+                patch.object(module, "POWER_SERVICE_BUDGET", 0.08),
+                patch.object(
+                    coordinator.client, "set_power", wraps=coordinator.client.set_power
+                ) as setter,
+            ):
+                poll = asyncio.create_task(coordinator.async_refresh())
+                await asyncio.wait_for(pump.entered.wait(), 1)
+                read = coordinator.pending
+                started = asyncio.get_running_loop().time()
+                control = asyncio.create_task(coordinator.async_set_power(True))
+                await self.wait_power_claim(coordinator)
+                if cancel:
+                    control.cancel()
+                with self.assertRaises(
+                    asyncio.CancelledError if cancel else HomeAssistantError
+                ) as error:
+                    await control
+                self.assertNotIsInstance(error.exception, PowerCancelled)
+                self.assertFalse(getattr(error.exception, "sent", False))
+                self.assertLess(asyncio.get_running_loop().time() - started, 0.5)
+                self.assertFalse(read.done())
+                self.assertIsNone(coordinator.power_pending)
+                setter.assert_not_called()
+                self.assertEqual(pump.writes, [])
+                pump.blocked.release.set()
+                await poll
+            self.assertEqual(pump.active, 0)
+            self.assertFalse(coordinator.client._reading)
+        with (
+            patch.object(module, "POWER_SERVICE_BUDGET", 0),
+            patch.object(coordinator.client, "set_power") as setter,
+        ):
+            with self.assertRaises(HomeAssistantError):
+                await coordinator.async_set_power(True)
+            setter.assert_not_called()
+        self.assertIsNone(coordinator.power_pending)
+
+    async def test_wait_rechecks_options_closed_and_unload_cancels_both(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        entry, coordinator, _ = await self.power_poll_setup()
+        for mode in ("option", "closed", "unload"):
+            pump = PumpIO(enabled=False)
+            pump.block_next = True
+            with (
+                patch.object(telemetry, "Socket", side_effect=pump.socket),
+                patch.object(
+                    coordinator.client, "set_power", wraps=coordinator.client.set_power
+                ) as setter,
+            ):
+                poll = asyncio.create_task(coordinator.async_refresh())
+                await asyncio.wait_for(pump.entered.wait(), 1)
+                control = asyncio.create_task(coordinator.async_set_power(True))
+                await self.wait_power_claim(coordinator)
+                if mode == "unload":
+                    self.assertTrue(
+                        await asyncio.wait_for(
+                            self.hass.config_entries.async_unload(entry.entry_id), 1
+                        )
+                    )
+                    with self.assertRaises(asyncio.CancelledError):
+                        await control
+                    await asyncio.gather(poll, return_exceptions=True)
+                else:
+                    if mode == "option":
+                        # Simulate an option change before its reload listener runs.
+                        with patch.object(
+                            self.hass.config_entries, "async_reload", new=AsyncMock()
+                        ):
+                            self.hass.config_entries.async_update_entry(
+                                entry, options={"enable_power_control": False}
+                            )
+                            pump.blocked.release.set()
+                            with self.assertRaises(HomeAssistantError):
+                                await control
+                            self.hass.config_entries.async_update_entry(
+                                entry, options={"enable_power_control": True}
+                            )
+                            await self.hass.async_block_till_done()
+                    else:
+                        coordinator.closed = True
+                        pump.blocked.release.set()
+                        with self.assertRaises(HomeAssistantError):
+                            await control
+                        coordinator.closed = False
+                    await poll
+                setter.assert_not_called()
+            self.assertIsNone(coordinator.power_pending)
+            self.assertIsNone(coordinator.pending)
+            self.assertFalse(coordinator.client._reading)
+            self.assertEqual(pump.active, 0)
+            self.assertEqual(pump.writes, [])
+
+    async def test_shield_failures_preserve_unknown_cancel_and_unexpected_structure(self):
+        from custom_components.cloud_intelligence.coordinator import PowerServiceOutcomeUnknown
+        from custom_components.cloud_intelligence.power import PowerCancelled, PowerOutcomeUnknown
+
+        _, coordinator, _ = await self.power_poll_setup()
+        for failure in (PowerOutcomeUnknown(), PowerCancelled(), ValueError("synthetic")):
+            release = asyncio.Event()
+
+            async def fail(failure=failure, release=release):
+                await release.wait()
+                raise failure
+
+            read = asyncio.create_task(fail())
+            with (
+                patch.object(coordinator, "pending", read),
+                patch.object(coordinator.client, "set_power") as setter,
+            ):
+                task = asyncio.create_task(coordinator.async_set_power(True))
+                await self.wait_power_claim(coordinator)
+                release.set()
+                expected = (
+                    PowerServiceOutcomeUnknown
+                    if isinstance(failure, PowerOutcomeUnknown)
+                    else type(failure)
+                )
+                with self.assertRaises(expected) as error:
+                    await task
+                if isinstance(failure, PowerOutcomeUnknown | PowerCancelled):
+                    self.assertTrue(error.exception.sent and error.exception.uncertain)
+                    self.assertFalse(coordinator.last_update_success)
+                else:
+                    self.assertIs(error.exception, failure)
+                setter.assert_not_called()
+            self.assertIsNone(coordinator.power_pending)
+
+    async def test_wait_plus_postsend_timeout_or_cancel_unknown_no_retry(self):
+        from custom_components.cloud_intelligence import coordinator as module
+        from custom_components.cloud_intelligence import telemetry
+        from custom_components.cloud_intelligence.coordinator import PowerServiceOutcomeUnknown
+        from custom_components.cloud_intelligence.power import PowerCancelled
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        for cancel in (False, True):
+            pump = PumpIO(enabled=False)
+            pump.block_next = True
+            verification = asyncio.Event()
+            timeouts = []
+            original_timeout = coordinator.client.timeout
+            original_setter = coordinator.client.set_power
+
+            async def setter(enabled, timeouts=timeouts, original_setter=original_setter):
+                timeouts.append(coordinator.client.timeout)
+                return await original_setter(enabled)
+
+            def factory(pump=pump, verification=verification):
+                sock = pump.socket()
+                if len(pump.sockets) == 5:
+                    sock.hold = True
+                    verification.set()
+                return sock
+
+            budget = 1 if cancel else 0.25
+            with (
+                patch.object(module, "POWER_SERVICE_BUDGET", budget),
+                patch.object(telemetry, "Socket", side_effect=factory),
+                patch.object(coordinator.client, "set_power", side_effect=setter) as called,
+            ):
+                poll = asyncio.create_task(coordinator.async_refresh())
+                await asyncio.wait_for(pump.entered.wait(), 1)
+                started = asyncio.get_running_loop().time()
+                control = asyncio.create_task(coordinator.async_set_power(True))
+                await self.wait_power_claim(coordinator)
+                await asyncio.sleep(0.08)
+                pump.blocked.release.set()
+                await asyncio.wait_for(verification.wait(), 1)
+                await asyncio.wait_for(pump.sockets[-1].entered.wait(), 1)
+                if cancel:
+                    control.cancel()
+                with self.assertRaises(
+                    PowerCancelled if cancel else PowerServiceOutcomeUnknown
+                ) as error:
+                    await control
+                self.assertTrue(error.exception.sent and error.exception.uncertain)
+                self.assertLess(asyncio.get_running_loop().time() - started, budget + 0.2)
+                await poll
+                await asyncio.sleep(0.02)
+                called.assert_awaited_once_with(True)
+            self.assertLess(timeouts[0], budget - 0.05)
+            self.assertEqual(coordinator.client.timeout, original_timeout)
+            self.assertEqual(pump.writes, [True])
+            self.assertEqual(pump.maximum, 1)
+            self.assertEqual(pump.active, 0)
+            self.assertFalse(coordinator.client._reading)
+            self.assertIsNone(coordinator.power_pending)
+            self.assertFalse(coordinator.last_update_success)
+            self.assertEqual(self.hass.states.get(target).state, "unavailable")
 
     async def test_failed_platform_unload_keeps_coordinator(self):
         entry = await self.add()

@@ -11,6 +11,8 @@ from .client import CannotConnect, IdentityMismatch, InvalidAuth, LocalClient
 from .const import DEFAULT_INTERVAL, DOMAIN, ENABLE_POWER_CONTROL, MIN_INTERVAL
 from .power import PowerCancelled, PowerDisabled, PowerOutcomeUnknown
 
+POWER_SERVICE_BUDGET = 10.0
+
 
 class PowerServiceOutcomeUnknown(HomeAssistantError):
     """HA service failure with safe machine-readable outcome flags."""
@@ -42,7 +44,7 @@ class LocalCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         # Do not launch a poll against a control's exclusive session or queue it.
-        if self.power_pending is not None:
+        if self.closed or self.power_pending is not None or self.pending is not None:
             raise UpdateFailed("Local operation in progress")
         self.pending = asyncio.create_task(self.client.read(require_complete=self.data is None))
         try:
@@ -59,9 +61,14 @@ class LocalCoordinator(DataUpdateCoordinator):
             raise TypeError("Power requires a strict bool")
         if self.closed or self.entry.options.get(ENABLE_POWER_CONTROL, False) is not True:
             raise HomeAssistantError("Experimental power control is disabled")
-        if self.pending is not None or self.power_pending is not None:
+        if self.power_pending is not None:
             raise HomeAssistantError("Local operation already in progress")
-        self.power_pending = asyncio.create_task(self.client.set_power(enabled))
+        deadline = asyncio.get_running_loop().time() + POWER_SERVICE_BUDGET
+        # Claim synchronously before yielding: only the already-running READ may
+        # finish. Neither another control nor a new poll can enter the gap.
+        self.power_pending = asyncio.create_task(
+            self._async_power_operation(enabled, self.pending, deadline)
+        )
         try:
             result = await self.power_pending
             self.async_set_updated_data(result.snapshot)
@@ -74,15 +81,50 @@ class LocalCoordinator(DataUpdateCoordinator):
             raise PowerServiceOutcomeUnknown(
                 "Power outcome unknown; do not automatically retry"
             ) from None
-        except (CannotConnect, IdentityMismatch, InvalidAuth, PowerDisabled):
+        except (CannotConnect, IdentityMismatch, InvalidAuth, PowerDisabled, TimeoutError):
             raise HomeAssistantError("Power request refused before confirmation") from None
         finally:
             self.power_pending = None
 
+    async def _async_power_operation(self, enabled, read, deadline):
+        async with asyncio.timeout_at(deadline) as budget:
+            if read is not None:
+                try:
+                    # A service timeout/cancel must not cancel an independent poll.
+                    await asyncio.shield(read)
+                except asyncio.CancelledError:
+                    if read.done() and not asyncio.current_task().cancelling():
+                        # shield replaces a cancelled inner Task's exception with
+                        # plain CancelledError. Recover its structured subtype;
+                        # never mistake cancellation of THIS waiter for that.
+                        read.result()
+                    raise
+                except (CannotConnect, IdentityMismatch, InvalidAuth):
+                    # No poll values are reused, including on failure. set_power
+                    # must obtain its OWN complete, valid fresh pre-read.
+                    pass
+            if self.closed or self.entry.options.get(ENABLE_POWER_CONTROL, False) is not True:
+                raise PowerDisabled
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError
+            original_timeout = self.client.timeout
+            # The core's existing deadline checks must also cover synchronous
+            # validation/send work, not just the outer cancellation timer.
+            self.client.timeout = min(original_timeout, remaining)
+            try:
+                return await self.client.set_power(enabled)
+            except PowerCancelled:
+                if budget.expired():
+                    raise PowerOutcomeUnknown from None
+                raise
+            finally:
+                self.client.timeout = original_timeout
+
     async def async_close(self):
         self.closed = True
-        await self.async_shutdown()
         tasks = [task for task in (self.pending, self.power_pending) if task is not None]
         for task in tasks:
             task.cancel()
+        await self.async_shutdown()
         await asyncio.gather(*tasks, return_exceptions=True)

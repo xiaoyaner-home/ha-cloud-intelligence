@@ -54,6 +54,11 @@ ZIP 已含 `custom_components/cloud_intelligence/...` 路径，解压到 HA 配�
 `switch.turn_off` 暂停开机许可，`switch.turn_on` 恢复许可；`switch` 不是电机运行 `run`。
 本次只提供补水联动可调用接口，不实现自动补水守护，也不是安全认证的急停。
 
+仅在 HA coordinator 层，控制可等待已经开始的只读轮询，但绝不等待另一个控制。
+等待前原子占用控制位，阻止新轮询插队；等待与唯一一次 fresh pre-read／写入／读回共享
+10 秒服务总预算，包含在上层 12 秒 I/O 窗口内。失败轮询不能为控制提供状态。
+取消或卸载会清理占位；不引入通用队列、新客户端或自动重发。core client 的并发操作仍立即拒绝。
+
 每次严格只收 bool。先在同一认证/Observe 会话内取得完整有效新状态，记录
 `switch/presSet/mode/propor/tarSpeed`；已达到目标则 no-op，否则只发一次固定
 `{"switch":0}` 或 `{"switch":1}`。随后在同一排他门、同一稳定端点及整次 10 秒预算内，

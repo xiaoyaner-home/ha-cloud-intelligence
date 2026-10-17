@@ -34,7 +34,40 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make external-links`: optional bounded HTTP link audit, separate from default
   offline checks; not an install or release gate that runs silently.
 
-## Experimental power candidate offline check
+## Poll/control collision regression
+
+The HA-only arbitration change retains the original core-client immediate overlap
+rejection and its protocol/endpoint tests unchanged. Current offline checks pass
+29 Python 3.13.12 core tests (99% coverage), 212 tests in HA 2026.9.1 / Python 3.14.6
+(93% combined branch coverage), and all six assertion-killing mutations. The HA
+coordinator retains 100% statement/branch coverage. The only superseded assertion
+is the former HA control-vs-read immediate refusal; control-vs-control still refuses.
+
+A real `PowerSwitch.turn_on` service against a blocked real-client read first failed
+with `Local operation already in progress`, then passed with one fresh control
+operation and at most one active synthetic physical socket. New cases cover poll
+failure followed by independent complete/incomplete control pre-read, slot claiming,
+second-control/new-poll refusal, bounded waiting, pre-send budget exhaustion,
+cancellation without cancelling the poll, option/closed rechecks, actual unload,
+structured shield failure, and post-send timeout/cancellation without retry.
+
+`tools/poll_policy_probe.py --policy-source <read-only-policy-checkout> --predeadline
+--output <evidence.json>` is a separate optional composition probe for the frozen
+native HA refill policy at revision `4de1d1af056a7f4dea5cd13547972a1b9611f4bf`.
+Run it in the same network-disabled HA image, mounting that checkout read-only.
+It loads the public package and its `tests/e2e.py` Rig, uses actual PowerSwitch,
+Coordinator and LocalClient, and replaces only physical socket I/O. The policy's
+120-second duration and 12-second I/O defaults remain unchanged. A read is placed
+in flight before advancing the persisted deadline; no pending edits, direct policy
+step calls or manual retry occur. The old coordinator leaves pump off and pending
+on after its unique restore attempt; the fixed coordinator records exactly off/on,
+reads back on and clears pending. The original end+120 deadline is checked before
+test-only deadline advancement; this is not a claim of waiting 120 wall-clock seconds.
+The probe also permits injection in the post-refresh/pre-write scheduling gap by
+omitting `--predeadline`. These remain synthetic offline checks, not production or
+physical acceptance of this fix.
+
+## Experimental power candidate offline check (earlier baseline)
 
 `make check` passes with 29 Python 3.13.12 core tests (99% branch-enabled coverage)
 and 205 tests in actual HA 2026.9.1 / Python 3.14.6 (93% combined branch-enabled

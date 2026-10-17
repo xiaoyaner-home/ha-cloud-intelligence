@@ -87,8 +87,17 @@ The only operating exception is the following opt-in experimental contract:
 - One HA standard switch, control-role unique ID, same device/config entry.
   Options reload existing entries. `switch.turn_on` / `switch.turn_off` target the
   added entity; no custom setter service. Switch is enable permission, not `run`.
-- Shared client, stable endpoint and immediate-fail exclusive read/write gate;
-  one whole 10-second operation budget. No queue, new bypass client or poll race.
+- Shared client and stable endpoint; the core read/write gate still rejects overlap
+  immediately. At the HA coordinator only, a control atomically claims its slot
+  before waiting for an already-running read. Wait plus the single `set_power`
+  invocation share a total 10-second service deadline (within a 12-second caller
+  I/O budget); the client's existing operation timeout is capped to the remaining
+  time and restored on exit. Expired budget never starts a write. No waiting for
+  another control, general queue, new bypass client or automatic retry.
+- The claimed slot rejects new polls/controls. Waiting shields the independent read
+  from service cancellation, rechecks closed/options before control I/O, and unload
+  cancels/awaits both tasks. Failed poll values are never control inputs: only a
+  new complete valid pre-read by `set_power` can authorize its fixed send.
 - Full valid fresh pre-read in the same authenticated Observe session as the send.
   Record `switch/presSet/mode/propor/tarSpeed`; at target is no-op. Otherwise send
   only fixed `{"switch":0}` or `{"switch":1}`, exactly once, no retransmission.

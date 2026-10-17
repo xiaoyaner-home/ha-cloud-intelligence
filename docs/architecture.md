@@ -79,7 +79,17 @@ Opt 1 still cannot prove device source time or provide MAC/anti-replay protectio
 The send-attempt flag is set synchronously before sendto; no retry follows any
 unknown outcome. `PowerCancelled` remains asyncio cancellation; the coordinator
 wraps unknown service errors with the same flags, marks states unavailable and
-tracks/cancels/awaits controls on unload. No long-lived listener or new client.
+tracks/cancels/awaits controls on unload. At the HA coordinator boundary, a control
+claims its slot synchronously and may wait for the existing read (never another
+control), shielding it from cancellation of the service waiter. New polls and
+controls cannot enter that gap. One absolute 10-second deadline includes waiting,
+fresh pre-read, send and verification; the existing client timeout is temporarily
+capped to the remainder and restored in `finally`. Closed/options are rechecked
+before client I/O. Poll errors do not supply control data or bypass its own fresh
+complete pre-read. Exhaustion before send refuses without a write; after attempted
+send, timeout/cancel remains structured unknown and unavailable, never retried.
+`async_close` cancels both the shielded read and the control waiter before awaiting
+shutdown, without a cyclic wait. No long-lived listener, general queue or new client.
 `switch.py` adds only an opt-in standard switch with a control-role ID on the same
 device; all 12 read IDs and config identity remain unchanged. Options use existing
 reload listeners and permission is checked on every call, including stale entities.

@@ -48,6 +48,14 @@ Observe token/key window AFTER send on the same endpoint, under one exclusive
 `presSet/mode/propor/tarSpeed`. Old-session packets and set/ACK200 cannot confirm.
 Measurement/actual-speed changes are allowed. No device timestamp is assumed.
 
+At the HA boundary, an enable command may wait for an already-running poll, but
+never another control. It claims the control slot before waiting so no new poll can
+cut in. Waiting plus the one fresh-pre-read/write/verification operation share a
+10-second total service budget (within a 12-second caller I/O window). A failed
+poll is not reused as control data. Cancellation/unload releases the claim; there
+is no general queue, extra client or automatic retry. The core client still rejects
+overlapping operations immediately.
+
 A send attempt followed by timeout, cancellation, lost response or failed checks
 is outcome unknown, never optimistic success and never automatically retried.
 The HA entities become unavailable until a successful read. A recovery guard must
