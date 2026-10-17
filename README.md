@@ -56,6 +56,12 @@ poll is not reused as control data. Cancellation/unload releases the claim; ther
 is no general queue, extra client or automatic retry. The core client still rejects
 overlapping operations immediately.
 
+For the control switch, `homeassistant.update_entity` waits for an actual read,
+not the coordinator's request-refresh cooldown. Busy or failed refreshes expose
+unavailable, and a report without valid power permission stays unknown; cached
+on is not evidence for a restore decision. Concurrent explicit refreshes refuse
+with unavailable rather than silently returning the previous state.
+
 A send attempt followed by timeout, cancellation, lost response or failed checks
 is outcome unknown, never optimistic success and never automatically retried.
 The HA entities become unavailable until a successful read. A recovery guard must

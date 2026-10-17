@@ -87,6 +87,13 @@ The only operating exception is the following opt-in experimental contract:
 - One HA standard switch, control-role unique ID, same device/config entry.
   Options reload existing entries. `switch.turn_on` / `switch.turn_off` target the
   added entity; no custom setter service. Switch is enable permission, not `run`.
+- For the control switch, `homeassistant.update_entity` awaits a real coordinator
+  refresh, bypassing request-refresh debounce. A running coordinator read finishes
+  before its own read; busy controls/read failures become unavailable, and missing
+  valid switch state remains unknown. Overlapping explicit entity updates refuse
+  with unavailable, not a staged-update cached success. Cancellation publishes
+  unavailable, including while waiting for HA's refresh lock. This observation is
+  separate from, and never replaces, control's mandatory fresh complete pre-read.
 - Shared client and stable endpoint; the core read/write gate still rejects overlap
   immediately. At the HA coordinator only, a control atomically claims its slot
   before waiting for an already-running read. Wait plus the single `set_power`
@@ -241,7 +248,7 @@ A future cloud/shared-device adapter must explicitly review migration semantics.
 - [Packaging](../tests/ha/test_package.py): deterministic ZIP and standalone imports
   using only the installed component and real HA, without the repository core.
 - [Verification](verification.md): pinned tools, branch coverage ≥90%, exact core
-  parity and two core plus four HA/protocol assertion-killing mutations.
+  parity and two core plus six HA/protocol assertion-killing mutations.
 
 Default checks are offline and never contact production. Further release gates
 include independent review, real-device acceptance of this actual adapter,

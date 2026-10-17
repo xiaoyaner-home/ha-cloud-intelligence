@@ -1,8 +1,11 @@
 """Opt-in, non-optimistic Wilo enable permission. Never motor-running control."""
 
+import asyncio
+
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, UpdateFailed
 
 from ._core import entity_unique_id
 from .const import DOMAIN, ENABLE_POWER_CONTROL
@@ -32,6 +35,31 @@ class PowerSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self):
         return self.coordinator.data.snapshot.powered
+
+    async def async_device_update(self, warning=True):
+        # Entity's default staged-update shortcut returns immediately with cached
+        # state. An overlapping explicit refresh must instead fail closed.
+        if self._update_staged:
+            self.coordinator.async_set_update_error(
+                UpdateFailed("Local refresh already in progress")
+            )
+            raise HomeAssistantError("Local refresh already in progress")
+        await super().async_device_update(warning)
+
+    async def async_update(self):
+        """Finish a real read for homeassistant.update_entity, never a debounce."""
+        if not self.enabled:
+            return
+        try:
+            # async_refresh uses HA's existing refresh lock, but bypasses its
+            # request cooldown. Busy control/read failures publish unavailable.
+            await self.coordinator.async_refresh()
+        except asyncio.CancelledError:
+            self.coordinator.async_set_update_error(UpdateFailed("Local refresh cancelled"))
+            # DUC may already have set success=False without notifying listeners
+            # when cancellation interrupts its read. Publish that failure now.
+            self.coordinator.async_update_listeners()
+            raise
 
     async def async_turn_on(self, **kwargs):
         await self.coordinator.async_set_power(True)

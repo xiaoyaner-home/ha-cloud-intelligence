@@ -25,7 +25,7 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make check-ha`: a disposable `--platform linux/amd64 --rm --network none`
   container, memory 2 GiB / CPU 2, with only this checkout bind-mounted at `/work`.
   Actual HA 2026.9.1 / Python 3.14.6, cryptography 48.0.1, coverage 7.16.0 are checked
-  at runtime. It runs all tests and combined branch coverage ≥90%, plus four
+  at runtime. It runs all tests and combined branch coverage ≥90%, plus six
   additional HA/protocol mutations. No shared virtual environment is modified.
 - `make package`: validates local manifest/HACS/locale shape, both HACS and Home Assistant
   brand icon copies (256x256 and 512x512), and builds a deterministic ZIP containing the
@@ -34,10 +34,43 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make external-links`: optional bounded HTTP link audit, separate from default
   offline checks; not an install or release gate that runs silently.
 
-## Poll/control collision regression
+## Explicit control-switch refresh regression
+
+A real HA request-refresh cooldown was primed while the synthetic physical pump
+was on, followed by an external synthetic off without updating HA. The original
+`homeassistant.update_entity` returned cached on, allowing the frozen native refill
+policy to record restore debt even though control's own pre-read correctly no-oped.
+After deadline advancement the original composition wrote on. This was reproduced
+in software, not on a physical device.
+
+The permanent `--original-off-debounce` mode of `tools/poll_policy_probe.py` now
+checks both after-flush and after-deadline: physical off, HA off, pending false and
+zero writes. It uses the same frozen policy revision and real HA/PowerSwitch/
+Coordinator/LocalClient as below; only socket I/O is synthetic. No policy state,
+fixtures, defaults or consumer logic is replaced. Six additional real HA tests
+cover an active and actually expired cooldown, an earlier read plus an independent
+fresh read, a busy control, failed/unknown reports, overlapping explicit services,
+and cancellation during a read or while waiting for HA's refresh lock.
+
+`make check` passes 29 core tests (99% core coverage) and 218 complete HA-container
+tests (93% combined branch coverage, including the original 212). Both new isolated
+mutations are killed by assertions: restoring request-refresh debounce and restoring
+HA's staged-update cached return. The two core and all six HA/protocol mutation
+baselines pass, and all eight mutants fail the intended assertions.
+
+The predeadline composition fixture must release its earlier read after observing
+that native `update_entity` is waiting, before waiting for restore to start. Its
+former reverse wait order deadlocks once explicit refresh is genuinely fresh; that
+is a fixture dependency error, not a runtime restore failure. The probe asserts
+this waiting phase, then still inserts a second read in the pre-write scheduling
+gap and requires the original single-client/bounded-control-wait assertions. Both
+composition modes finish with exactly off/on writes, confirmed on and pending false.
+The separate original-off regression requires zero writes throughout.
+
+## Poll/control collision regression (earlier baseline)
 
 The HA-only arbitration change retains the original core-client immediate overlap
-rejection and its protocol/endpoint tests unchanged. Current offline checks pass
+rejection and its protocol/endpoint tests unchanged. That baseline passed
 29 Python 3.13.12 core tests (99% coverage), 212 tests in HA 2026.9.1 / Python 3.14.6
 (93% combined branch coverage), and all six assertion-killing mutations. The HA
 coordinator retains 100% statement/branch coverage. The only superseded assertion
@@ -124,6 +157,8 @@ Two original core mutations corrupt running-vs-power separation and unknown-mode
 write permissions. Two adapter mutations conflate the actual HA power/run binary
 states and reject valid encrypted content-format 0. Two additional power mutations
 invert the fixed switch payload and bypass preservation of other writable settings.
+Two explicit-refresh mutations restore request-refresh debounce and the overlapping
+staged-update cached return, each killed through the real standard HA service.
 Each runs in a distinct
 throwaway repository copy, requires an unmodified passing baseline and an actual
 assertion failure (not import/tool failure), and leaves working source unchanged.

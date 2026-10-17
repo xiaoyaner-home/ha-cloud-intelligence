@@ -94,6 +94,14 @@ shutdown, without a cyclic wait. No long-lived listener, general queue or new cl
 device; all 12 read IDs and config identity remain unchanged. Options use existing
 reload listeners and permission is checked on every call, including stale entities.
 No arbitrary setter, pressure/mode/speed write or custom write service exists.
+The control switch overrides HA's explicit `async_update` to await coordinator
+`async_refresh`, retaining HA's refresh lock but bypassing request-refresh debounce.
+An earlier read finishes before the new read; the existing control exclusion still
+fails unavailable. The entity also rejects HA's overlapping staged-update shortcut
+with unavailable instead of cached success. A cancelled refresh explicitly notifies
+listeners because HA can set its failure flag without publishing state on cancellation.
+Missing switch reports remain unknown. No new scheduler, client or policy is added;
+control's independent complete fresh pre-read remains mandatory.
 No live switch-write, root-cause-fix or production approval is claimed.
 
 Initial failures use HA's standard ConfigEntryNotReady or ConfigEntryAuthFailed

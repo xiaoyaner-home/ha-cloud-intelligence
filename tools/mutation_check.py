@@ -49,6 +49,20 @@ def run_test(copy: Path, test: str) -> subprocess.CompletedProcess:
 
 HA_MUTATIONS = (
     (
+        "explicit_power_refresh_must_not_debounce",
+        "custom_components/cloud_intelligence/switch.py",
+        "await self.coordinator.async_refresh()",
+        "await self.coordinator.async_request_refresh()",
+        "tests.ha.test_lifecycle.Lifecycle.test_explicit_power_refresh_bypasses_active_debounce",
+    ),
+    (
+        "overlapping_explicit_refresh_must_fail_closed",
+        "custom_components/cloud_intelligence/switch.py",
+        "if self._update_staged:",
+        "if False:",
+        "tests.ha.test_lifecycle.Lifecycle.test_overlapping_explicit_power_refresh_never_returns_cached_on",
+    ),
+    (
         "local_binary_power_is_not_motor_run",
         "custom_components/cloud_intelligence/binary_sensor.py",
         "return self.value",

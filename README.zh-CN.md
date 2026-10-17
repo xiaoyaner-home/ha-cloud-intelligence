@@ -59,6 +59,10 @@ ZIP 已含 `custom_components/cloud_intelligence/...` 路径，解压到 HA 配�
 10 秒服务总预算，包含在上层 12 秒 I/O 窗口内。失败轮询不能为控制提供状态。
 取消或卸载会清理占位；不引入通用队列、新客户端或自动重发。core client 的并发操作仍立即拒绝。
 
+对控制开关调用 `homeassistant.update_entity` 必须等实际读取完成，不走 coordinator 的请求刷新冷却。
+刷新忙碌或失败时显示 unavailable，报告缺少有效开机许可时仍为 unknown；不能把缓存 on 当恢复依据。
+并发的显式刷新会拒绝并显示 unavailable，不会无声返回旧状态。
+
 每次严格只收 bool。先在同一认证/Observe 会话内取得完整有效新状态，记录
 `switch/presSet/mode/propor/tarSpeed`；已达到目标则 no-op，否则只发一次固定
 `{"switch":0}` 或 `{"switch":1}`。随后在同一排他门、同一稳定端点及整次 10 秒预算内，

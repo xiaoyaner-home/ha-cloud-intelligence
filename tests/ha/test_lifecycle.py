@@ -644,6 +644,176 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         )
         return entry, coordinator, control.entity_id
 
+    async def update_power_entity(self, target):
+        await self.hass.services.async_call(
+            "homeassistant", "update_entity", {"entity_id": target}, blocking=True
+        )
+
+    async def test_explicit_power_refresh_bypasses_active_debounce(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=True)
+        client = coordinator.client
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            # A real request starts HA's cooldown; the subsequent physical action
+            # is not published to HA. The explicit service must read it before return.
+            await coordinator.async_request_refresh()
+            self.assertEqual(self.hass.states.get(target).state, "on")
+            pump.enabled = False
+            sockets = len(pump.sockets)
+            await self.update_power_entity(target)
+            self.assertEqual(self.hass.states.get(target).state, "off")
+            self.assertEqual(len(pump.sockets), sockets + 2)
+        self.assertIs(coordinator.client, client)
+        self.assertEqual(pump.writes, [])
+        self.assertFalse(pump.enabled)
+        self.assertEqual(pump.active, 0)
+
+    async def test_explicit_power_refresh_after_cooldown_and_unknown_report(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=True)
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            await coordinator.async_request_refresh()
+            # Let the actual HA cooldown expire; no debounce/data replacement.
+            await asyncio.sleep(coordinator._debounced_refresh.cooldown + 0.05)
+            self.assertIsNone(coordinator._debounced_refresh._timer_task)
+            pump.enabled = False
+            await self.update_power_entity(target)
+            self.assertEqual(self.hass.states.get(target).state, "off")
+
+        def partial():
+            sock = pump.socket()
+            sock.notifications = [(101, report({"pressure": 2.4}))]
+            return sock
+
+        coordinator.client.timeout = 0.05
+        with patch.object(telemetry, "Socket", side_effect=partial):
+            await self.update_power_entity(target)
+        self.assertEqual(self.hass.states.get(target).state, "unknown")
+        self.assertEqual(pump.writes, [])
+
+    async def test_explicit_power_refresh_waits_existing_read_for_own_fresh_read(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=True)
+        pump.block_next = True
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            poll = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            refresh = asyncio.create_task(self.update_power_entity(target))
+            try:
+                await asyncio.sleep(0.05)
+                self.assertFalse(refresh.done())
+                pump.enabled = False
+                pump.blocked.release.set()
+                await asyncio.wait_for(asyncio.gather(poll, refresh), 2)
+            finally:
+                pump.blocked.release.set()
+                await asyncio.gather(poll, refresh, return_exceptions=True)
+        self.assertEqual(self.hass.states.get(target).state, "off")
+        self.assertEqual(len(pump.sockets), 4)
+        self.assertEqual(pump.maximum, 1)
+        self.assertEqual(pump.active, 0)
+        self.assertEqual(pump.writes, [])
+
+    async def test_explicit_power_refresh_busy_control_or_failed_read_unavailable(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=True)
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            await coordinator.async_request_refresh()
+            pump.block_next = True
+            control = asyncio.create_task(coordinator.async_set_power(False))
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            sockets = len(pump.sockets)
+            try:
+                await self.update_power_entity(target)
+                self.assertEqual(self.hass.states.get(target).state, "unavailable")
+                self.assertEqual(len(pump.sockets), sockets)
+            finally:
+                # Cancel before send, never turn the synthetic device off here.
+                control.cancel()
+                await asyncio.gather(control, return_exceptions=True)
+            self.assertEqual(pump.writes, [])
+            await self.update_power_entity(target)
+            self.assertEqual(self.hass.states.get(target).state, "on")
+            await coordinator.async_request_refresh()  # fail during a real cooldown too
+
+        def failed():
+            sock = pump.socket()
+            sock.hold = True
+            sock.failure = OSError("synthetic read failure")
+            sock.release.set()
+            return sock
+
+        with patch.object(telemetry, "Socket", side_effect=failed):
+            await self.update_power_entity(target)
+        self.assertEqual(self.hass.states.get(target).state, "unavailable")
+        self.assertFalse(coordinator.last_update_success)
+        self.assertEqual(pump.writes, [])
+        self.assertEqual(pump.active, 0)
+
+    async def test_overlapping_explicit_power_refresh_never_returns_cached_on(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        pump = PumpIO(enabled=False)
+        pump.block_next = True
+        with patch.object(telemetry, "Socket", side_effect=pump.socket):
+            refresh = asyncio.create_task(self.update_power_entity(target))
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            try:
+                await self.update_power_entity(target)
+                self.assertEqual(self.hass.states.get(target).state, "unavailable")
+                self.assertFalse(refresh.done())
+            finally:
+                pump.blocked.release.set()
+                await asyncio.wait_for(refresh, 2)
+        self.assertEqual(self.hass.states.get(target).state, "off")
+        self.assertEqual(pump.maximum, 1)
+        self.assertEqual(pump.writes, [])
+
+    async def test_cancelled_explicit_power_refresh_unavailable(self):
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, target = await self.power_poll_setup()
+        for waiting_for_poll in (False, True):
+            pump = PumpIO(enabled=True)
+            with patch.object(telemetry, "Socket", side_effect=pump.socket):
+                await coordinator.async_refresh()
+                self.assertEqual(self.hass.states.get(target).state, "on")
+                pump.enabled = False
+                pump.block_next = True
+                poll = None
+                if waiting_for_poll:
+                    poll = asyncio.create_task(coordinator.async_refresh())
+                    await asyncio.wait_for(pump.entered.wait(), 1)
+                refresh = asyncio.create_task(self.update_power_entity(target))
+                await asyncio.wait_for(pump.entered.wait(), 1)
+                await asyncio.sleep(0.05)
+                refresh.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await refresh
+                self.assertEqual(self.hass.states.get(target).state, "unavailable")
+                if poll is not None:
+                    self.assertFalse(poll.done())
+                    pump.blocked.release.set()
+                    await asyncio.wait_for(poll, 2)
+            self.assertEqual(pump.active, 0)
+            self.assertEqual(pump.writes, [])
+            self.assertIsNone(coordinator.pending)
+
     async def test_power_waits_inflight_poll_then_single_fresh_write(self):
         from custom_components.cloud_intelligence import telemetry
         from tests.ha.poll_fixture import PumpIO

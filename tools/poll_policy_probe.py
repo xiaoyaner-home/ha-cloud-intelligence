@@ -21,7 +21,44 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-async def run(policy, predeadline=False):
+async def original_off_debounce(rig, coordinator, pump, target, evidence):
+    """An external off during real HA cooldown must never create restore debt."""
+    await coordinator.async_request_refresh()
+    await rig.idle()
+    assert rig.state(target) == "on" and coordinator.data.snapshot.powered
+    pump.enabled = False
+    evidence["before"] = {"ha": rig.state(target), "physical": pump.enabled}
+    await rig.flush()
+    await rig.until(
+        lambda: rig.state("script.refill_guard_step") == "off", "close completed", timeout=14
+    )
+    evidence["after_flush"] = {
+        "ha": rig.state(target),
+        "physical": pump.enabled,
+        "pending": rig.pending(),
+        "writes": list(pump.writes),
+    }
+    await rig.expire()
+    await rig.until(
+        lambda: rig.state("script.refill_guard_step") == "off", "deadline completed", timeout=14
+    )
+    evidence["after_deadline"] = {
+        "ha": rig.state(target),
+        "physical": pump.enabled,
+        "pending": rig.pending(),
+        "writes": list(pump.writes),
+    }
+    evidence["passed"] = all(
+        state["ha"] == "off"
+        and not state["physical"]
+        and not state["pending"]
+        and not state["writes"]
+        for state in (evidence["after_flush"], evidence["after_deadline"])
+    )
+    return evidence
+
+
+async def run(policy, predeadline=False, original_off=False):
     from homeassistant.core import callback
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers.entity_component import DATA_INSTANCES
@@ -83,6 +120,8 @@ async def run(policy, predeadline=False):
                 await rig.set_flushing("unknown")
                 await rig.set_flushing("off")
                 await rig.until(lambda: rig.state(e2e.PREFIX + "seen_off") == "on", "baseline")
+                if original_off:
+                    return await original_off_debounce(rig, coordinator, pump, target, evidence)
                 await rig.begin()
                 await rig.until(
                     lambda: rig.state("script.refill_guard_step") == "off", "close done"
@@ -97,10 +136,16 @@ async def run(policy, predeadline=False):
                 evidence["deadline_minus_flush_end"] = deadline - ended
                 polls = []
                 restore_started = asyncio.Event()
+                refresh_started = asyncio.Event()
 
                 @callback
                 def inject(event):
                     data = event.data
+                    if (
+                        data.get("domain") == "homeassistant"
+                        and data.get("service") == "update_entity"
+                    ):
+                        refresh_started.set()
                     if (
                         data.get("domain") == "input_text"
                         and data.get("service") == "set_value"
@@ -111,11 +156,11 @@ async def run(policy, predeadline=False):
                     ):
                         # Native restore has finished its refresh; insert the periodic
                         # read in the service scheduling gap BEFORE PowerSwitch runs.
-                        if not predeadline:
-                            pump.block_next = True
-                            polls.append(
-                                asyncio.create_task(coordinator.async_refresh(), eager_start=True)
-                            )
+                        pump.block_next = True
+                        pump.entered.clear()
+                        polls.append(
+                            asyncio.create_task(coordinator.async_refresh(), eager_start=True)
+                        )
                         restore_started.set()
 
                 remove = rig.hass.bus.async_listen("call_service", inject)
@@ -136,6 +181,19 @@ async def run(policy, predeadline=False):
                         },
                         blocking=True,
                     )
+                    if predeadline:
+                        # Fresh explicit update now correctly waits for the earlier
+                        # read. Releasing only after restore_started would deadlock
+                        # the fixture, not demonstrate a runtime control failure.
+                        await asyncio.wait_for(refresh_started.wait(), 4)
+                        await asyncio.sleep(0.15)
+                        evidence["refresh_waited_for_predeadline_read"] = (
+                            coordinator.pending is not None and not restore_started.is_set()
+                        )
+                        assert evidence["refresh_waited_for_predeadline_read"]
+                        assert coordinator.power_pending is None and pump.writes == [False]
+                        pump.blocked.release.set()
+                        await asyncio.wait_for(polls[0], 2)
                     await asyncio.wait_for(restore_started.wait(), 4)
                     await asyncio.wait_for(pump.entered.wait(), 1)
                     assert coordinator.pending is not None
@@ -185,10 +243,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy-source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--predeadline", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--predeadline", action="store_true")
+    mode.add_argument("--original-off-debounce", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.ERROR)
-    evidence = asyncio.run(run(args.policy_source, args.predeadline))
+    evidence = asyncio.run(run(args.policy_source, args.predeadline, args.original_off_debounce))
     args.output.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(evidence, ensure_ascii=False, indent=2))
     return 0 if evidence["passed"] else 1
