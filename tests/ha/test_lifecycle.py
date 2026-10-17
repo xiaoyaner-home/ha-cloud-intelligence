@@ -10,7 +10,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from homeassistant import loader
 from homeassistant.config_entries import ConfigEntries, ConfigEntryState
@@ -452,7 +452,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             await self.hass.services.async_call(
                 "switch", "turn_off", {"entity_id": control.entity_id}, blocking=True
             )
-            setter.assert_awaited_once_with(False)
+            setter.assert_awaited_once_with(False, _deadline=ANY)
         self.assertEqual(self.hass.states.get(control.entity_id).state, "off")
         with patch.object(
             a.runtime_data.client,
@@ -462,7 +462,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             await self.hass.services.async_call(
                 "switch", "turn_on", {"entity_id": control.entity_id}, blocking=True
             )
-            setter.assert_awaited_once_with(True)
+            setter.assert_awaited_once_with(True, _deadline=ANY)
         self.assertEqual(self.hass.states.get(control.entity_id).state, "on")
         self.hass.config_entries.async_update_entry(a, options={"enable_power_control": False})
         await self.hass.async_block_till_done()
@@ -502,7 +502,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hass.states.get(control.entity_id).state, "unavailable")
         started, closed = asyncio.Event(), asyncio.Event()
 
-        async def blocked(enabled):
+        async def blocked(enabled, *, _deadline):
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -847,7 +847,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             finally:
                 blocked.release.set()
                 await asyncio.gather(poll, control, return_exceptions=True)
-            setter.assert_awaited_once_with(True)
+            setter.assert_awaited_once_with(True, _deadline=ANY)
         self.assertIs(coordinator.client, client)
         self.assertEqual(pump.writes, [True])
         self.assertEqual(self.hass.states.get(target).state, "on")
@@ -856,6 +856,55 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(s.closed for s in pump.sockets))
         self.assertIsNone(coordinator.power_pending)
         self.assertIsNone(coordinator.pending)
+
+    async def deadline_validation_probe(self, budget, wait, stall):
+        import time
+
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.cloud_intelligence import client as client_module
+        from custom_components.cloud_intelligence import coordinator as module
+        from custom_components.cloud_intelligence import telemetry
+        from tests.ha.poll_fixture import PumpIO
+
+        _, coordinator, _ = await self.power_poll_setup()
+        pump = PumpIO(enabled=False)
+        pump.block_next = True
+        validate = client_module.validate_input
+        original_timeout = coordinator.client.timeout
+
+        def delayed_validate(data):
+            result = validate(data)
+            time.sleep(stall)
+            return result
+
+        with (
+            patch.object(telemetry, "Socket", side_effect=pump.socket),
+            patch.object(module, "POWER_SERVICE_BUDGET", budget),
+        ):
+            poll = asyncio.create_task(coordinator.async_refresh())
+            await asyncio.wait_for(pump.entered.wait(), 1)
+            control = asyncio.create_task(coordinator.async_set_power(True))
+            await self.wait_power_claim(coordinator)
+            await asyncio.sleep(wait)
+            pump.blocked.release.set()
+            with patch.object(client_module, "validate_input", side_effect=delayed_validate):
+                outcome = (await asyncio.gather(control, return_exceptions=True))[0]
+                await poll
+        self.assertEqual(pump.writes, [], "Expired absolute deadline must forbid switch send")
+        self.assertIsInstance(outcome, HomeAssistantError)
+        self.assertFalse(getattr(outcome, "sent", False))
+        self.assertEqual(pump.active, 0)
+        self.assertTrue(all(sock.closed for sock in pump.sockets))
+        self.assertFalse(coordinator.client._reading)
+        self.assertEqual(coordinator.client.timeout, original_timeout)
+        self.assertIsNone(coordinator.power_pending)
+
+    async def test_deadline_sync_validation_actual_ten_seconds(self):
+        await self.deadline_validation_probe(10.0, 9.8, 0.4)
+
+    async def test_deadline_sync_validation_short_budget(self):
+        await self.deadline_validation_probe(0.15, 0.06, 0.18)
 
     async def wait_power_claim(self, coordinator):
         async with asyncio.timeout(1):
@@ -1091,9 +1140,13 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             original_timeout = coordinator.client.timeout
             original_setter = coordinator.client.set_power
 
-            async def setter(enabled, timeouts=timeouts, original_setter=original_setter):
-                timeouts.append(coordinator.client.timeout)
-                return await original_setter(enabled)
+            async def setter(
+                enabled, *, _deadline, timeouts=timeouts, original_setter=original_setter
+            ):
+                import time
+
+                timeouts.append(_deadline - time.monotonic())
+                return await original_setter(enabled, _deadline=_deadline)
 
             def factory(pump=pump, verification=verification):
                 sock = pump.socket()
@@ -1127,7 +1180,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                 self.assertLess(asyncio.get_running_loop().time() - started, budget + 0.2)
                 await poll
                 await asyncio.sleep(0.02)
-                called.assert_awaited_once_with(True)
+                called.assert_awaited_once_with(True, _deadline=ANY)
             self.assertLess(timeouts[0], budget - 0.05)
             self.assertEqual(coordinator.client.timeout, original_timeout)
             self.assertEqual(pump.writes, [True])

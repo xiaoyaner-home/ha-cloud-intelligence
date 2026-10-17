@@ -265,6 +265,7 @@ async def run_once(
     allow_network=False,
     _endpoint=None,
     _power=None,
+    _deadline=None,
 ):
     """Bounded report; private power extension writes only after a valid full pre-read."""
     if _power is not None and (
@@ -301,6 +302,10 @@ async def run_once(
     window = _Window()
     start = time.monotonic()
     overall = start + maxwait
+    if _deadline is not None:
+        if type(_deadline) not in (int, float) or not math.isfinite(_deadline):
+            raise ValueError("Invalid operation deadline")
+        overall = min(overall, _deadline)
     deadline = min(overall, start + 10)
     phase = "auth"
     base = secrets.randbelow(65536)
@@ -343,6 +348,10 @@ async def run_once(
                 options.append((6, b""))
         requests[stage] = {"id": mid, "token": token, "path": path}
         packet = p.coap_encode(1, mid, token, path, body, p.COAP_TYPE_CON, options)
+        # Check AFTER synchronous validation/encryption/encoding and BEFORE the
+        # send-attempt flag. Never restart the caller's absolute operation budget.
+        if _deadline is not None and time.monotonic() >= overall:
+            raise TimeoutError
         if stage == "refresh":
             result["refresh"]["send_attempts"] = 1  # BEFORE send; a failed send may be uncertain
             result["refresh"]["status"] = "send_uncertain"

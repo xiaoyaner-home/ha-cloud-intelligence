@@ -98,8 +98,12 @@ The only operating exception is the following opt-in experimental contract:
   immediately. At the HA coordinator only, a control atomically claims its slot
   before waiting for an already-running read. Wait plus the single `set_power`
   invocation share a total 10-second service deadline (within a 12-second caller
-  I/O budget); the client's existing operation timeout is capped to the remaining
-  time and restored on exit. Expired budget never starts a write. No waiting for
+  I/O budget); an internal absolute `time.monotonic()` deadline can only tighten
+  the client's existing operation budget (started before synchronous validation).
+  The same boundary reaches both report sessions and the final pre-send check,
+  after packet encoding. Asyncio timers receive durations, not timestamps from a
+  potentially different clock epoch. Expired budget never starts a write; the
+  client timeout setting is not mutated. No waiting for
   another control, general queue, new bypass client or automatic retry.
 - The claimed slot rejects new polls/controls. Waiting shields the independent read
   from service cancellation, rechecks closed/options before control I/O, and unload
@@ -248,7 +252,7 @@ A future cloud/shared-device adapter must explicitly review migration semantics.
 - [Packaging](../tests/ha/test_package.py): deterministic ZIP and standalone imports
   using only the installed component and real HA, without the repository core.
 - [Verification](verification.md): pinned tools, branch coverage ≥90%, exact core
-  parity and two core plus six HA/protocol assertion-killing mutations.
+  parity and two core plus eleven HA/protocol assertion-killing mutations.
 
 Default checks are offline and never contact production. Further release gates
 include independent review, real-device acceptance of this actual adapter,

@@ -83,8 +83,12 @@ tracks/cancels/awaits controls on unload. At the HA coordinator boundary, a cont
 claims its slot synchronously and may wait for the existing read (never another
 control), shielding it from cancellation of the service waiter. New polls and
 controls cannot enter that gap. One absolute 10-second deadline includes waiting,
-fresh pre-read, send and verification; the existing client timeout is temporarily
-capped to the remainder and restored in `finally`. Closed/options are rechecked
+fresh pre-read, send and verification. Its internal `time.monotonic()` boundary
+can only tighten the client's own budget, which starts before synchronous input
+validation. Both report sessions retain that absolute boundary; the final send
+check runs after encoding and before marking the send attempt. Asyncio receives
+remaining durations, never a timestamp assumed to share its clock epoch. The
+client timeout setting is not mutated. Closed/options are rechecked
 before client I/O. Poll errors do not supply control data or bypass its own fresh
 complete pre-read. Exhaustion before send refuses without a write; after attempted
 send, timeout/cancel remains structured unknown and unavailable, never retried.

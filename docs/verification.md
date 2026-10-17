@@ -25,8 +25,9 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make check-ha`: a disposable `--platform linux/amd64 --rm --network none`
   container, memory 2 GiB / CPU 2, with only this checkout bind-mounted at `/work`.
   Actual HA 2026.9.1 / Python 3.14.6, cryptography 48.0.1, coverage 7.16.0 are checked
-  at runtime. It runs all tests and combined branch coverage ≥90%, plus six
-  additional HA/protocol mutations. No shared virtual environment is modified.
+  at runtime. It runs all tests and combined branch coverage ≥90%, plus eleven
+  additional HA/protocol mutations (including two explicit-refresh and five
+  absolute-deadline mutations). No shared virtual environment is modified.
 - `make package`: validates local manifest/HACS/locale shape, both HACS and Home Assistant
   brand icon copies (256x256 and 512x512), and builds a deterministic ZIP containing the
   component's Python/JSON files, permitted brand PNGs and Apache license. This is not an
@@ -52,11 +53,12 @@ cover an active and actually expired cooldown, an earlier read plus an independe
 fresh read, a busy control, failed/unknown reports, overlapping explicit services,
 and cancellation during a read or while waiting for HA's refresh lock.
 
-`make check` passes 29 core tests (99% core coverage) and 218 complete HA-container
-tests (93% combined branch coverage, including the original 212). Both new isolated
-mutations are killed by assertions: restoring request-refresh debounce and restoring
-HA's staged-update cached return. The two core and all six HA/protocol mutation
-baselines pass, and all eight mutants fail the intended assertions.
+The explicit-refresh branch alone passed 29 core tests (99% core coverage) and
+218 complete HA-container tests (93% combined branch coverage, including the
+original 212). Both new isolated mutations were killed by assertions: restoring
+request-refresh debounce and restoring HA's staged-update cached return. Its two
+core and six HA/protocol mutation baselines passed, and all eight mutants failed
+the intended assertions. These are historical branch results, not merged totals.
 
 The predeadline composition fixture must release its earlier read after observing
 that native `update_entity` is waiting, before waiting for restore to start. Its
@@ -66,6 +68,50 @@ this waiting phase, then still inserts a second read in the pre-write scheduling
 gap and requires the original single-client/bounded-control-wait assertions. Both
 composition modes finish with exactly off/on writes, confirmed on and pending false.
 The separate original-off regression requires zero writes throughout.
+
+## Absolute power-service deadline repair
+
+Permanent real-HA regressions first failed on the prior collision candidate with
+both the actual 10-second budget (9.8-second read plus 0.4-second synchronous input
+validation pause) and a shortened budget: each sent a switch after expiration.
+The deadline branch alone passed 218 tests, including the original 212 and six
+new deadline tests, with 93% combined branch coverage. Its core verification passed
+29 tests on pinned Python 3.13.12. Its two core and nine HA/protocol mutations were
+detected by assertion failures, including forwarding the absolute deadline,
+forbidding budget extension/rebasing, checking after final packet encoding, and
+rejecting postread expiry as success. These are historical branch results.
+
+One internal monotonic boundary covers waiting, validation, both report sessions
+and the final pre-send check. A timer cannot preempt synchronous execution; a
+late return is possible, but expiration must not authorize an irreversible send.
+The client timeout is no longer temporarily mutated. Existing HA setter spies
+accept the explicit internal deadline keyword while retaining same-client,
+fresh/no-op and single-send assertions. These author-run synthetic checks are not
+independent review or deployment approval.
+
+## Combined refresh and deadline verification
+
+The merged tree's actual `make check` passes 29 core tests (99% core coverage) and
+224 complete HA-container tests (93% combined branch coverage). The container count
+includes the core tests, the original 212-test scope and both complementary repairs;
+it is not 224 additional tests or the contribution of either repair alone.
+The coordinator has 100% statement/branch coverage and PowerSwitch 96%. All two core
+and eleven HA/protocol independent mutation baselines pass, and all thirteen mutants
+fail the intended assertions, including both refresh and all five deadline gates.
+
+The current policy probe passes default gap, `--predeadline` and
+`--original-off-debounce`; the unchanged parent debounce probe also passes. Both
+original-off probes retain physical off, HA off, pending false and zero writes after
+flush and deadline advancement. Both restore probes retain exactly off/on writes,
+confirmed on, pending false, the same client and maximum one physical session.
+The six deadline probes pass with only the pre-existing single spy adaptation to
+`set_power(True, _deadline=unittest.mock.ANY)`; all behavioral assertions remain.
+The unmodified original 10-second test, with 9.8 seconds of waiting and a 0.4-second
+synchronous validation stall, returns HomeAssistantError with no send and no writes.
+Its synchronous late return does not extend the send budget. Policy deadlines are
+advanced in the fixture; no 120-second wall-clock wait is claimed. This is neutral
+merged-tree offline verification, not formal independent review, physical acceptance
+or production approval.
 
 ## Poll/control collision regression (earlier baseline)
 

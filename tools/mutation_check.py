@@ -90,6 +90,41 @@ HA_MUTATIONS = (
         "for k in frozenset()",
         "tests.protocol.test_power.PowerTests.test_ack200_unchanged_partial_or_other_setting_change_is_unknown",
     ),
+    (
+        "power_service_must_forward_absolute_deadline",
+        "custom_components/cloud_intelligence/coordinator.py",
+        "return await self.client.set_power(enabled, _deadline=deadline)",
+        "return await self.client.set_power(enabled)",
+        "tests.ha.test_lifecycle.Lifecycle.test_deadline_sync_validation_short_budget",
+    ),
+    (
+        "power_deadline_cannot_extend_client_budget",
+        "custom_components/cloud_intelligence/client.py",
+        "deadline = min(deadline, _deadline)",
+        "deadline = _deadline",
+        "tests.protocol.test_power.PowerTests.test_deadline_caps_validation_and_rejects_invalid_internal_values",
+    ),
+    (
+        "power_transport_cannot_rebase_absolute_budget",
+        "custom_components/cloud_intelligence/telemetry.py",
+        "overall = min(overall, _deadline)",
+        "overall = overall",
+        "tests.protocol.test_power.PowerTests.test_deadline_transport_setup_cannot_restart_budget",
+    ),
+    (
+        "power_final_encoding_must_not_cross_send_deadline",
+        "custom_components/cloud_intelligence/telemetry.py",
+        "if _deadline is not None and time.monotonic() >= overall:",
+        "if False:",
+        "tests.protocol.test_power.PowerTests.test_deadline_final_encoding_expiry_forbids_irreversible_send",
+    ),
+    (
+        "power_postread_expiry_cannot_claim_success",
+        "custom_components/cloud_intelligence/client.py",
+        "if time.monotonic() >= deadline:",
+        "if False:",
+        "tests.protocol.test_power.PowerTests.test_deadline_postread_sync_expiry_is_unknown_not_success",
+    ),
 )
 
 

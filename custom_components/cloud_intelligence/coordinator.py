@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -63,7 +64,7 @@ class LocalCoordinator(DataUpdateCoordinator):
             raise HomeAssistantError("Experimental power control is disabled")
         if self.power_pending is not None:
             raise HomeAssistantError("Local operation already in progress")
-        deadline = asyncio.get_running_loop().time() + POWER_SERVICE_BUDGET
+        deadline = time.monotonic() + POWER_SERVICE_BUDGET
         # Claim synchronously before yielding: only the already-running READ may
         # finish. Neither another control nor a new poll can enter the gap.
         self.power_pending = asyncio.create_task(
@@ -87,7 +88,10 @@ class LocalCoordinator(DataUpdateCoordinator):
             self.power_pending = None
 
     async def _async_power_operation(self, enabled, read, deadline):
-        async with asyncio.timeout_at(deadline) as budget:
+        # asyncio owns its clock epoch; pass a duration, never a monotonic
+        # timestamp to timeout_at. The original monotonic boundary remains the
+        # authority for synchronous work and the irreversible send.
+        async with asyncio.timeout(max(0, deadline - time.monotonic())) as budget:
             if read is not None:
                 try:
                     # A service timeout/cancel must not cancel an independent poll.
@@ -105,21 +109,14 @@ class LocalCoordinator(DataUpdateCoordinator):
                     pass
             if self.closed or self.entry.options.get(ENABLE_POWER_CONTROL, False) is not True:
                 raise PowerDisabled
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
+            if deadline - time.monotonic() <= 0:
                 raise TimeoutError
-            original_timeout = self.client.timeout
-            # The core's existing deadline checks must also cover synchronous
-            # validation/send work, not just the outer cancellation timer.
-            self.client.timeout = min(original_timeout, remaining)
             try:
-                return await self.client.set_power(enabled)
+                return await self.client.set_power(enabled, _deadline=deadline)
             except PowerCancelled:
                 if budget.expired():
                     raise PowerOutcomeUnknown from None
                 raise
-            finally:
-                self.client.timeout = original_timeout
 
     async def async_close(self):
         self.closed = True

@@ -2,6 +2,7 @@
 
 import asyncio
 import ipaddress
+import math
 import re
 import secrets
 import time
@@ -147,13 +148,15 @@ class LocalClient:
         finally:
             self._reading = False
 
-    async def set_power(self, enabled: bool) -> PowerResult:
+    async def set_power(self, enabled: bool, *, _deadline: float | None = None) -> PowerResult:
         """Experimental enable permission, not motor running. Never retry a send.
 
         A fresh full pre-read and the write share one authenticated Observe session.
         Verification reauthenticates AFTER send on the same endpoint, under the same
         exclusive 10-second operation budget. Old session notifications cannot prove
         success. Local receive time is not a device timestamp or anti-replay proof.
+        `_deadline` is an internal time.monotonic() boundary: it may only tighten
+        the operation budget, including synchronous validation and packet encoding.
         """
         if type(enabled) is not bool:
             raise TypeError("Power requires a strict bool")
@@ -164,13 +167,22 @@ class LocalClient:
         self._reading = True
         attempt = _PowerAttempt(enabled)
         try:
-            self.data = validate_input(self.data)
             if type(self.timeout) not in (float, int) or not 0 < self.timeout <= 10:
                 raise ValueError("Invalid timeout")
-            peer = (self.data["host"], 5683)
+            # Start BEFORE synchronous validation. A caller may tighten this
+            # time.monotonic boundary, never extend the client's own budget.
             deadline = time.monotonic() + self.timeout
+            if _deadline is not None:
+                if type(_deadline) not in (int, float) or not math.isfinite(_deadline):
+                    raise ValueError("Invalid operation deadline")
+                deadline = min(deadline, _deadline)
+            self.data = validate_input(self.data)
+            peer = (self.data["host"], 5683)
             candidate = {"ip": peer[0], "port": peer[1], "profile": [self.data]}
-            async with asyncio.timeout(self.timeout):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CannotConnect
+            async with asyncio.timeout(remaining):
                 await self._identity(peer, deadline)
 
                 async def report(power=None):
@@ -186,12 +198,16 @@ class LocalClient:
                         allow_network=True,
                         _endpoint=self._endpoint,
                         _power=power,
+                        _deadline=deadline,
                     )
                     if result["status"] not in ("complete",):
                         if result["status"] == "auth_rejected":
                             raise InvalidAuth
                         raise CannotConnect
-                    return self._snapshot(result, require_complete=True)
+                    snapshot = self._snapshot(result, require_complete=True)
+                    if time.monotonic() >= deadline:
+                        raise CannotConnect
+                    return snapshot
 
                 before = await report(attempt)
                 if not attempt.started:
