@@ -275,13 +275,159 @@ class PowerTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(telemetry, "Socket", side_effect=sockets),
-            patch.object(telemetry, "time", SimpleNamespace(monotonic=lambda: clock[0])),
+            patch.object(
+                telemetry, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
             patch.object(telemetry, "parse_snapshot", side_effect=expire),
         ):
             with self.assertRaises(CannotConnect):
                 await self.client().set_power(False)
         self.assertEqual(sockets[1].power_requests, [])
         self.assertTrue(all(sock.closed for sock in sockets[:2]))
+
+    async def test_deadline_caps_validation_and_rejects_invalid_internal_values(self):
+        from types import SimpleNamespace
+
+        from custom_components.cloud_intelligence import client as client_module
+
+        for deadline in (True, "1", float("nan"), float("inf")):
+            client = self.client()
+            with patch.object(telemetry, "Socket") as factory:
+                with self.assertRaises(ValueError):
+                    await client.set_power(False, _deadline=deadline)
+                factory.assert_not_called()
+            self.assertFalse(client._reading)
+        for timeout, deadline, elapsed in ((0.1, 100, 0.2), (10, 0.1, 0.2), (10, -1, 0)):
+            client = self.client(timeout=timeout)
+            clock = [0.0]
+            validate = client_module.validate_input
+
+            def pause(data, validate=validate, clock=clock, elapsed=elapsed):
+                result = validate(data)
+                clock[0] = elapsed
+                return result
+
+            with (
+                patch.object(
+                    client_module, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+                ),
+                patch.object(client_module, "validate_input", side_effect=pause),
+                patch.object(telemetry, "Socket") as factory,
+            ):
+                outcome = (
+                    await asyncio.gather(
+                        client.set_power(False, _deadline=deadline), return_exceptions=True
+                    )
+                )[0]
+                self.assertIsInstance(outcome, CannotConnect)
+                factory.assert_not_called()
+            self.assertFalse(client._reading)
+            self.assertEqual(client.timeout, timeout)
+
+    async def test_deadline_transport_setup_cannot_restart_budget(self):
+        from types import SimpleNamespace
+
+        from custom_components.cloud_intelligence import client as client_module
+
+        sockets = self.sockets()
+        clock = [100.0]  # Deliberately unrelated to the real event-loop epoch.
+        inputs = telemetry._inputs
+
+        def pause(*args, **kwargs):
+            result = inputs(*args, **kwargs)
+            clock[0] = 102.0
+            return result
+
+        with (
+            patch.object(
+                client_module, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(
+                telemetry, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(telemetry, "_inputs", side_effect=pause),
+            patch.object(telemetry, "Socket", side_effect=sockets),
+        ):
+            outcome = (
+                await asyncio.gather(
+                    self.client(timeout=1).set_power(False), return_exceptions=True
+                )
+            )[0]
+        self.assertEqual(sockets[1].sent, [])
+        self.assertIsInstance(outcome, CannotConnect)
+        self.assertEqual(sockets[1].power_requests, [])
+        self.assertTrue(all(sock.closed for sock in sockets[:2]))
+
+    async def test_deadline_final_encoding_expiry_forbids_irreversible_send(self):
+        from types import SimpleNamespace
+
+        from custom_components.cloud_intelligence import client as client_module
+
+        sockets = self.sockets()
+        clock = [100.0]
+        encode = telemetry.p.coap_encode
+        set_packets = []
+
+        def pause(*args, **kwargs):
+            packet = encode(*args, **kwargs)
+            if args[3].endswith("/thing/service/property/set"):
+                set_packets.append(packet)
+                if len(set_packets) == 2:  # refresh is allowed; expire encoding switch.
+                    clock[0] = 101.0
+            return packet
+
+        client = self.client(timeout=1)
+        with (
+            patch.object(
+                client_module, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(
+                telemetry, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(telemetry.p, "coap_encode", side_effect=pause),
+            patch.object(telemetry, "Socket", side_effect=sockets),
+        ):
+            outcome = (await asyncio.gather(client.set_power(False), return_exceptions=True))[0]
+        self.assertEqual(len(set_packets), 2)
+        self.assertEqual(sockets[1].power_requests, [])
+        self.assertIsInstance(outcome, CannotConnect)
+        self.assertFalse(client._reading)
+        self.assertTrue(all(sock.closed for sock in sockets[:2]))
+
+    async def test_deadline_postread_sync_expiry_is_unknown_not_success(self):
+        from types import SimpleNamespace
+
+        from custom_components.cloud_intelligence import client as client_module
+
+        sockets = self.sockets()
+        clock = [100.0]
+        client = self.client(timeout=1)
+        snapshot = client._snapshot
+        calls = []
+
+        def pause(*args, **kwargs):
+            result = snapshot(*args, **kwargs)
+            calls.append(result)
+            if len(calls) == 2:
+                clock[0] = 101.0
+            return result
+
+        with (
+            patch.object(
+                client_module, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(
+                telemetry, "time", SimpleNamespace(monotonic=lambda clock=clock: clock[0])
+            ),
+            patch.object(client, "_snapshot", side_effect=pause),
+            patch.object(telemetry, "Socket", side_effect=sockets),
+        ):
+            with self.assertRaises(PowerOutcomeUnknown) as error:
+                await client.set_power(False)
+        self.assertTrue(error.exception.sent and error.exception.uncertain)
+        self.assertEqual(len(sockets[1].power_requests), 1)
+        self.assertFalse(client._reading)
+        self.assertTrue(all(sock.closed for sock in sockets))
 
     async def test_incomplete_physical_send_is_unknown_without_retry(self):
         sockets = self.sockets()

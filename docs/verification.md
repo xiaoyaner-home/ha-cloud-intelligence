@@ -25,8 +25,9 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make check-ha`: a disposable `--platform linux/amd64 --rm --network none`
   container, memory 2 GiB / CPU 2, with only this checkout bind-mounted at `/work`.
   Actual HA 2026.9.1 / Python 3.14.6, cryptography 48.0.1, coverage 7.16.0 are checked
-  at runtime. It runs all tests and combined branch coverage ≥90%, plus four
-  additional HA/protocol mutations. No shared virtual environment is modified.
+  at runtime. It runs all tests and combined branch coverage ≥90%, plus nine
+  additional HA/protocol mutations (including five absolute-deadline mutations).
+  No shared virtual environment is modified.
 - `make package`: validates local manifest/HACS/locale shape, both HACS and Home Assistant
   brand icon copies (256x256 and 512x512), and builds a deterministic ZIP containing the
   component's Python/JSON files, permitted brand PNGs and Apache license. This is not an
@@ -34,7 +35,27 @@ A missing dependency/image is a failed prerequisite, not a skipped passing test.
 - `make external-links`: optional bounded HTTP link audit, separate from default
   offline checks; not an install or release gate that runs silently.
 
-## Poll/control collision regression
+## Absolute power-service deadline repair
+
+Permanent real-HA regressions first failed on the prior collision candidate with
+both the actual 10-second budget (9.8-second read plus 0.4-second synchronous input
+validation pause) and a shortened budget: each sent a switch after expiration.
+The repaired offline suite passes 218 tests, including the original 212 and six
+new deadline tests, with 93% combined branch coverage. Core verification remains
+29 tests on pinned Python 3.13.12. All two core and nine HA/protocol mutations are
+detected by assertion failures, including forwarding the absolute deadline,
+forbidding budget extension/rebasing, checking after final packet encoding, and
+rejecting postread expiry as success.
+
+One internal monotonic boundary covers waiting, validation, both report sessions
+and the final pre-send check. A timer cannot preempt synchronous execution; a
+late return is possible, but expiration must not authorize an irreversible send.
+The client timeout is no longer temporarily mutated. Existing HA setter spies
+accept the explicit internal deadline keyword while retaining same-client,
+fresh/no-op and single-send assertions. These are author-run synthetic checks,
+not independent review, combined-tree acceptance or deployment approval.
+
+## Poll/control collision regression (earlier baseline)
 
 The HA-only arbitration change retains the original core-client immediate overlap
 rejection and its protocol/endpoint tests unchanged. Current offline checks pass
